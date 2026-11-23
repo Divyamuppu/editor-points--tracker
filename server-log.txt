@@ -1,0 +1,32 @@
+
+> editor-points-tracker@1.0.0 dev
+> node --watch --env-file=.env src/server.js
+
+Editor Points Tracker running on http://localhost:3000
+[Error: ENOENT: no such file or directory, stat '/Users/veteam/Downloads/editor-points-tracker/public/index.html'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: '/Users/veteam/Downloads/editor-points-tracker/public/index.html',
+  expose: false,
+  statusCode: 404,
+  status: 404
+}
+[Error: ENOENT: no such file or directory, stat '/Users/veteam/Downloads/editor-points-tracker/public/index.html'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: '/Users/veteam/Downloads/editor-points-tracker/public/index.html',
+  expose: false,
+  statusCode: 404,
+  status: 404
+}
+[Error: ENOENT: no such file or directory, stat '/Users/veteam/Downloads/editor-points-tracker/public/index.html'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: '/Users/veteam/Downloads/editor-points-tracker/public/index.html',
+  expose: false,
+  statusCode: 404,
+  status: 404
+}

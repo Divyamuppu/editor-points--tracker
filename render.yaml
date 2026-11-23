@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: editor-points-tracker
+    runtime: node
+    plan: starter
+    region: singapore
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_TIMEZONE
+        value: Asia/Kolkata
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: TEAM_CODE
+        sync: false
