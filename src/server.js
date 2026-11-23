@@ -52,6 +52,11 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ code: 'unavailable', message: 'Something went wrong on the server. Try again.' });
 });
 
-migrate()
-  .then(() => app.listen(config.port, () => console.log(`Editor Points Tracker running on http://localhost:${config.port}`)))
-  .catch(e => { console.error('Could not start:', e.message); process.exit(1); });
+module.exports = app;
+
+// On Vercel the app runs as a function: tables are set up once with `npm run migrate`, not on every cold start.
+if (!process.env.VERCEL) {
+  migrate()
+    .then(() => app.listen(config.port, () => console.log(`Editor Points Tracker running on http://localhost:${config.port}`)))
+    .catch(e => { console.error('Could not start:', e.message); process.exit(1); });
+}
