@@ -20,7 +20,7 @@ const P = {
   link:'<path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>',
   chev:'<path d="M9 6l6 6-6 6"/>',
   back:'<path d="M15 6l-6 6 6 6"/>',
-  edit:'<path d="M4 20h4L20 8l-4-4L4 16z"/>', trash:'<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  edit:'<path d="M4 20h4L20 8l-4-4L4 16z"/>', x:'<path d="M6 6l12 12M18 6 6 18"/>', trash:'<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   copy:'<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
   lock:'<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   play:'<path d="M7 4v16l13-8z"/>',
@@ -1206,36 +1206,36 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 
 /* ---------- sign in ---------- */
 function renderAuth(mode){
-  S.authMode = mode || S.authMode || 'editor';
+  const prev = S.authMode; S.authMode = mode || S.authMode || 'editor';
   clearInterval(pollTimer);
   document.body.classList.add('auth');
   const admin = S.authMode === 'admin';
-  $('#authRoot').innerHTML = `<div class="auth-wrap">
-    <section class="auth-hero" aria-hidden="${admin ? 'false' : 'false'}">
-      <div class="brand" style="padding:0"><div class="logo light">${I('play')}</div><div><b>Editor Points</b><span>Daily engagement league</span></div></div>
-      <div><h1>Log today’s numbers.<br>Climb the board.</h1>
-        <p>Type your cuts’ views, likes, comments, shares and reposts once a day. Points add up all month.</p></div>
-      <ul class="auth-feats">
-        <li><span>${I('bolt')}</span><div><b>Points for growth</b><small>Every new view, like and share counts</small></div></li>
-        <li><span>${I('flame')}</span><div><b>Daily streaks</b><small>Log every day for bonus points</small></div></li>
-        <li><span>${I('gift')}</span><div><b>Month-end rewards</b><small>Reach a tier, win Editor of the month</small></div></li>
-      </ul>
-      <div class="swatches" aria-hidden="true">${PEOPLE.map(([x,y]) => `<i style="background:linear-gradient(135deg,${x},${y})"></i>`).join('')}</div>
-    </section>
-    <section class="auth-panel">
+  const body = admin ? adminForm() : `<div class="lp2-head"><h1 class="auth-h">Who’s logging <span class="lp2-grad">today?</span></h1><p class="auth-sub">Tap your profile, then enter your 4-digit PIN.</p></div><div class="names" id="authNames">${'<span class="skel name-skel"></span>'.repeat(7)}</div><div id="authPin"></div>`;
+  // Switching tabs only swaps the form, so the stage keeps animating.
+  if ($('#authRoot .auth-wrap') && prev){
+    $('#authRoot').querySelectorAll('[data-auth]').forEach(t => t.setAttribute('aria-pressed', String(t.dataset.auth === S.authMode)));
+    $('#authBody').innerHTML = body; $('#authBody').classList.remove('swap'); void $('#authBody').offsetWidth; $('#authBody').classList.add('swap');
+    if (admin) bindAdmin(); else loadEditorPicker();
+    return;
+  }
+  $('#authRoot').innerHTML = `<div class="auth-wrap lp2">
+    <div class="lp2-bg" aria-hidden="true"><i class="g1"></i><i class="g2"></i><i class="dots"></i></div>
+    <header class="lp2-top">
+      <div class="brand"><div class="logo light">${I('play')}</div><div><b>Editor Points</b><span>Daily engagement league · ${esc(monthLabel(monthOf(today())))}</span></div></div>
       <div class="seg auth-tabs" role="tablist" aria-label="Sign in as">
         <button type="button" role="tab" data-auth="editor" aria-pressed="${!admin}">${I('users')}Editor</button>
         <button type="button" role="tab" data-auth="admin" aria-pressed="${admin}">${I('lock')}Admin</button></div>
-      <div id="authBody">${admin ? adminForm() : `<h2 class="auth-h">Who’s logging today?</h2><div class="names" id="authNames">${'<span class="skel" style="height:52px;width:150px;border-radius:999px"></span>'.repeat(4)}</div><div id="authPin"></div>`}</div>
-    </section>
+    </header>
+    <main class="lp2-main"><div id="authBody" class="swap">${body}</div></main>
+    <p class="auth-foot">${I('lock')}Your PIN is private. Only you can log numbers for your cuts.</p>
   </div>`;
   if (admin) bindAdmin(); else loadEditorPicker();
 }
-const adminForm = () => `<h2 class="auth-h">Admin panel</h2><p class="auth-sub">Enter the admin password to manage editors, rewards and payouts.</p>
-  <form id="authForm" novalidate>
+const adminForm = () => `<div class="lp2-admin"><div class="lp2-admin-ico">${I('lock')}</div><h2 class="auth-h">Admin panel</h2><p class="auth-sub">Enter the admin password to manage editors, rewards and payouts.</p>
+  <form id="authForm" class="adminf" novalidate>
     <label class="field" for="a-pass">Admin password<input type="password" id="a-pass" name="password" autocomplete="current-password" maxlength="200" required></label>
     <div class="ferr" id="authErr" role="alert"></div>
-    <button type="submit" class="btn primary lg" id="authBtn">Open admin panel</button></form>`;
+    <button type="submit" class="btn primary lg" id="authBtn">Open admin panel</button></form></div>`;
 function bindAdmin(){
   const f = $('#authForm'); f.querySelector('input').focus();
   f.addEventListener('submit', async e => {
@@ -1250,25 +1250,37 @@ async function loadEditorPicker(){
   catch (ex) { $('#authNames').innerHTML = `<div class="banner err">${I('info')}<span>${esc(ex.message)}</span></div><button class="btn" data-auth="editor">Try again</button>`; return; }
   if (!list.length) { $('#authNames').innerHTML = '<p class="auth-sub">No editors yet. Ask the admin to add you.</p>'; return; }
   S.authList = list;
-  $('#authNames').innerHTML = list.map(e => `<button type="button" class="name-chip" data-pick="${esc(e.id)}" aria-pressed="false">${avatar(e)}<span><b>${esc(e.name)}</b><small>${e.hasPin ? 'Enter PIN' : 'First time'}</small></span></button>`).join('');
-  $('#authPin').innerHTML = `<p class="auth-sub hint-row">${I('info')}Tap your name to continue.</p>`;
+  $('#authNames').innerHTML = list.map((e, k) => { const [ca, cb] = PEOPLE[(Number.isInteger(e.colorIndex) ? e.colorIndex : k) % PEOPLE.length];
+    return `<button type="button" class="name-chip pc" style="--i:${k};--ca:${ca};--cb:${cb}" data-pick="${esc(e.id)}" aria-pressed="false" aria-label="Sign in as ${esc(e.name)}">
+      <span class="pc-band" aria-hidden="true"></span><span class="pc-av" aria-hidden="true">${esc((e.name || '?').trim().charAt(0).toUpperCase())}</span>
+      <b>${esc(e.name)}</b><small class="pc-st${e.hasPin ? '' : ' new'}">${I(e.hasPin ? 'lock' : 'plus')}${e.hasPin ? 'Enter PIN' : 'First time'}</small>
+      <span class="pc-go" aria-hidden="true">Sign in ${I('chev')}</span></button>`; }).join('');
+  $('#authPin').innerHTML = '';
 }
 const pinBoxes = (group, label) => `<div class="field"><span>${label}</span><div class="pin" data-group="${group}" role="group" aria-label="${label}">
   ${[0,1,2,3].map(i => `<input type="password" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="one-time-code" aria-label="${label} digit ${i+1}" data-i="${i}">`).join('')}</div></div>`;
 const readPin = g => [...document.querySelectorAll(`.pin[data-group="${g}"] input`)].map(i => i.value).join('');
+function closePin(){
+  const open = document.querySelector('.name-chip[aria-pressed="true"]');
+  if ($('#authPin')) $('#authPin').innerHTML = '';
+  document.querySelectorAll('.name-chip').forEach(c => c.setAttribute('aria-pressed', 'false'));
+  open?.focus();
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.body.classList.contains('auth') && document.querySelector('.pin-modal')) closePin(); });
 function pinForm(id){
   const e = (S.authList || []).find(x => x.id === id); if (!e) return;
   document.querySelectorAll('.name-chip').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.pick === id)));
   const first = !e.hasPin;
-  $('#authPin').innerHTML = `<form id="authForm" class="pinform" novalidate>
+  $('#authPin').innerHTML = `<div class="pin-modal" role="dialog" aria-modal="true" aria-label="Sign in as ${esc(e.name)}"><form id="authForm" class="pinform" novalidate>
+    <button type="button" class="pin-x" data-pin-close aria-label="Choose a different name">${I('x')}</button>
     <div class="pin-head">${avatar(e,'lg')}<div><b>Hi ${esc(e.name)}</b><span>${first ? 'First time here: set a 4-digit PIN you’ll remember.' : 'Enter your 4-digit PIN.'}</span></div></div>
     ${first ? `<label class="field" for="a-code">Team code <span class="hint">from your admin</span><input type="text" id="a-code" name="teamCode" autocomplete="off" maxlength="100" required></label>` : ''}
     <div class="pin-row">${pinBoxes('pin', first ? 'New PIN' : 'PIN')}${first ? pinBoxes('pin2', 'Repeat PIN') : ''}</div>
     <div class="ferr" id="authErr" role="alert"></div>
     <button type="submit" class="btn primary lg" id="authBtn">${first ? 'Set PIN and start' : 'Sign in'}</button>
-  </form>`;
+  </form></div>`;
   const f = $('#authForm');
-  (first ? f.teamCode : f.querySelector('.pin input')).focus();
+  (first ? f.teamCode : f.querySelector('.pin input')).focus({ preventScroll:true });
   f.addEventListener('submit', async ev => {
     ev.preventDefault(); const err = $('#authErr'); err.textContent = '';
     const pin = readPin('pin');
@@ -1310,6 +1322,8 @@ async function signIn(url, body, label){
   const btn = $('#authBtn'); const err = $('#authErr'); btn.disabled = true; btn.textContent = 'Signing in…';
   try {
     const r = await api('POST', url, body);
+    const wrap = $('#authRoot .auth-wrap');
+    if (wrap && !matchMedia('(prefers-reduced-motion: reduce)').matches){ wrap.classList.add('leaving'); await new Promise(res => setTimeout(res, 420)); }
     document.body.classList.remove('auth'); $('#authRoot').innerHTML = '';
     S.view = 'home'; setHash(); await refresh(); startPolling();
     toast(r.firstTime ? 'PIN set. You’re in.' : 'Signed in', 'win');
@@ -1317,13 +1331,14 @@ async function signIn(url, body, label){
 }
 document.addEventListener('click', e => {
   const a = e.target.closest('[data-auth]'); if (a){ renderAuth(a.dataset.auth); return; }
+  if (e.target.closest('[data-pin-close]') || e.target.classList.contains('pin-modal')){ closePin(); return; }
   const p = e.target.closest('[data-pick]'); if (p) pinForm(p.dataset.pick);
 });
 document.addEventListener('click', async e => {
   if (e.target.closest('[data-act="logout"]')){
     if (S.dirty.size && !window.confirm('You have unsaved numbers. Sign out anyway?')) return;
     try { await api('POST', '/api/auth/logout', {}); } catch {}
-    S.signedIn = false; S.dirty.clear(); renderAuth(S.isAdmin ? 'admin' : 'editor');
+    S.signedIn = false; S.dirty.clear(); S.authMode = null; renderAuth(S.isAdmin ? 'admin' : 'editor');
   }
   if (e.target.closest('[data-act="password"]')) pinDialog();
 });
