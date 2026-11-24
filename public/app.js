@@ -160,6 +160,7 @@ function hwmBefore(cut, date){
   }
   return hwm;
 }
+const rateLabel = w => { w = Number(w)||0; if (w <= 0) return 'no points'; if (w >= 1) return `${pts(w)} pt${w===1?'':'s'} each`; let n = 1; while (n < 1e6 && Math.abs(w*n - Math.round(w*n)) > 1e-9) n *= 10; const per = Math.round(w*n); return `${per} pt${per===1?'':'s'} per ${n.toLocaleString('en-IN')}`; };
 const engagementPts = (gains, s) => METRICS.reduce((a,m) => a + (gains[m.key]||0) * s[m.key], 0);
 
 function compute(){
@@ -486,9 +487,10 @@ function cutCard(c, date, locked){
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${entry ? `<span class="chip good">${I('check')}Logged</span>` : '<span class="chip acc">Needs numbers</span>'}
         <span class="chip">${pts(info?.monthPts?.[ym] || 0)} pts this month</span>
         <button class="btn sm" data-act="history" data-id="${esc(c.id)}">${I('today')}History</button><button class="btn ghost icon sm" data-act="edit-cut" data-id="${esc(c.id)}" aria-label="Edit cut details">${I('edit')}</button></div></div>
-    <div class="mgrid">${METRICS.map(m => `<div class="mt"><label for="${fid(m.key)}">${I(m.key)}${m.label}</label>
+    <div class="mgrid">${METRICS.map(m => `<div class="mt"><label for="${fid(m.key)}">${I(m.key)}${m.label}<span class="rate">${esc(rateLabel(S.calc?.s?.[m.key]))}</span></label>
       <input type="number" id="${fid(m.key)}" data-keep data-metric="${m.key}" min="0" step="1" inputmode="numeric" ${locked?'disabled':''} value="${entry ? int(entry[m.key]) : ''}" placeholder="${last ? int(last[m.key]) : '0'}">
       <span class="d" data-delta="${m.key}"></span></div>`).join('')}</div>
+    <div class="catsum" aria-live="polite"></div>
     <div class="cut-f"><span class="last">${last ? `Last logged ${esc(dayLabel(lastDate).toLowerCase())}` : 'First entry: type the totals the platform shows right now'}</span>
       <span style="display:flex;gap:10px;align-items:center"><span class="preview"></span><button class="btn primary" data-act="save-cut" data-id="${esc(c.id)}" ${locked?'disabled':''}>Save</button></span></div>
   </article>`;
@@ -505,11 +507,16 @@ function updatePreview(card){
     if (n === null){ gains[k] = 0; if (dEl){ dEl.textContent = ''; dEl.className = 'd'; } return; }
     any = true;
     const g = n - (before[k]||0); gains[k] = Math.max(0, g);
-    if (dEl){ dEl.textContent = g > 0 ? `+${fmt(g)}` : g < 0 ? 'below last' : 'no change'; dEl.className = 'd ' + (g > 0 ? 'up' : g < 0 ? 'down' : ''); }
+    if (dEl){ const cp = Math.max(0, g) * (s[k]||0);
+      dEl.innerHTML = g > 0 ? `<b>+${pts(cp)} pts</b><span>+${fmt(g)} ${esc(METRICS.find(x => x.key === k)?.label.toLowerCase() || '')}</span>` : g < 0 ? 'Lower than last entry · 0 pts' : 'No change · 0 pts';
+      dEl.className = 'd ' + (g > 0 ? 'up' : g < 0 ? 'down' : ''); }
   });
   const el = card.querySelector('.preview'); if (!el) return;
   const dirty = [...card.querySelectorAll('input[data-metric]')].some(i => S.dirty.has(i.id));
   el.innerHTML = any && dirty ? `<span class="gainpill">${I('bolt')}+${pts(engagementPts(gains, s))} pts</span>` : '';
+  const sum = card.querySelector('.catsum');
+  if (sum){ const total = engagementPts(gains, s);
+    sum.innerHTML = any && total > 0 ? METRICS.filter(m => gains[m.key] > 0).map(m => `<span>${esc(m.label)} <b>${pts(gains[m.key]*s[m.key])}</b></span>`).join('<i>+</i>') + `<i>=</i><span class="tot"><b>${pts(total)} pts</b> ${dirty ? 'if you save' : 'from this entry'}</span>` : ''; }
   const btn = card.querySelector('[data-act="save-cut"]');
   if (btn && !btn.disabled){ const done = card.classList.contains('done'); btn.className = 'btn ' + (dirty || !done ? 'primary' : 'quiet'); btn.textContent = done ? (dirty ? 'Save changes' : 'Saved') : 'Save'; }
 }

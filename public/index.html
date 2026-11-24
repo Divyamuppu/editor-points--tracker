@@ -950,6 +950,26 @@ body{background:radial-gradient(900px 480px at 100% -10%,rgba(56,189,248,.10),tr
 .page .progress-pill span,.page .progress-pill{color:var(--I)!important}
 .auth-hero .brand span{color:rgba(255,255,255,.78)!important}
 .page .card.hero .ring .rc span{color:rgba(255,255,255,.8)!important}
+
+/* ---------- points per category on each metric ---------- */
+.mt label{flex-wrap:wrap}
+.mt label .rate{margin-left:auto;font-size:10.5px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--F,#667180)}
+.mt .d{display:flex;flex-direction:column;gap:1px;line-height:1.3}
+.mt .d b{font-size:12.5px;font-weight:600;color:#4ADE80}
+.mt .d span{font-size:11px;color:var(--M,#98A2B0);font-weight:400}
+.mt .d.down,.mt .d:not(.up){color:var(--M,#98A2B0)}
+.catsum{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;font-size:12.5px;color:var(--M,#98A2B0)}
+.catsum:empty{display:none}
+.catsum b{color:var(--I,#EEF2F7);font-weight:600}
+.catsum i{font-style:normal;color:var(--F,#667180)}
+.catsum .tot b{color:#4ADE80}
+@media (max-width:860px){
+  .mt{grid-template-columns:minmax(0,1fr) 110px!important;grid-template-rows:auto auto}
+  .mt label{grid-column:1;grid-row:1}
+  .mt input{grid-column:2;grid-row:1/3}
+  .mt .d{grid-column:1;grid-row:2;text-align:left!important;flex-direction:row;gap:6px;align-items:baseline}
+  .mt label .rate{margin-left:0;width:100%}
+}
 </style>
 </head>
 <body>
