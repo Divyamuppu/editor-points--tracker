@@ -1214,7 +1214,7 @@ function renderAuth(mode){
   // Switching tabs only swaps the form, so the stage keeps animating.
   if ($('#authRoot .auth-wrap') && prev){
     $('#authRoot').querySelectorAll('[data-auth]').forEach(t => t.setAttribute('aria-pressed', String(t.dataset.auth === S.authMode)));
-    $('#authBody').innerHTML = body; $('#authBody').classList.remove('swap'); void $('#authBody').offsetWidth; $('#authBody').classList.add('swap');
+    $('#pinPortal')?.replaceChildren(); $('#authBody').innerHTML = body; $('#authBody').classList.remove('swap'); void $('#authBody').offsetWidth; $('#authBody').classList.add('swap');
     if (admin) bindAdmin(); else loadEditorPicker();
     return;
   }
@@ -1255,14 +1255,20 @@ async function loadEditorPicker(){
       <span class="pc-band" aria-hidden="true"></span><span class="pc-av" aria-hidden="true">${esc((e.name || '?').trim().charAt(0).toUpperCase())}</span>
       <b>${esc(e.name)}</b><small class="pc-st${e.hasPin ? '' : ' new'}">${I(e.hasPin ? 'lock' : 'plus')}${e.hasPin ? 'Enter PIN' : 'First time'}</small>
       <span class="pc-go" aria-hidden="true">Sign in ${I('chev')}</span></button>`; }).join('');
-  $('#authPin').innerHTML = '';
+  pinHost().innerHTML = '';
 }
 const pinBoxes = (group, label) => `<div class="field"><span>${label}</span><div class="pin" data-group="${group}" role="group" aria-label="${label}">
   ${[0,1,2,3].map(i => `<input type="password" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="one-time-code" aria-label="${label} digit ${i+1}" data-i="${i}">`).join('')}</div></div>`;
 const readPin = g => [...document.querySelectorAll(`.pin[data-group="${g}"] input`)].map(i => i.value).join('');
+// The PIN pop-up lives outside the animated form container so position:fixed always covers the screen.
+function pinHost(){
+  let h = $('#pinPortal');
+  if (!h){ h = document.createElement('div'); h.id = 'pinPortal'; ($('#authRoot .auth-wrap') || $('#authRoot')).appendChild(h); }
+  return h;
+}
 function closePin(){
   const open = document.querySelector('.name-chip[aria-pressed="true"]');
-  if ($('#authPin')) $('#authPin').innerHTML = '';
+  pinHost().innerHTML = '';
   document.querySelectorAll('.name-chip').forEach(c => c.setAttribute('aria-pressed', 'false'));
   open?.focus();
 }
@@ -1271,7 +1277,7 @@ function pinForm(id){
   const e = (S.authList || []).find(x => x.id === id); if (!e) return;
   document.querySelectorAll('.name-chip').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.pick === id)));
   const first = !e.hasPin;
-  $('#authPin').innerHTML = `<div class="pin-modal" role="dialog" aria-modal="true" aria-label="Sign in as ${esc(e.name)}"><form id="authForm" class="pinform" novalidate>
+  pinHost().innerHTML = `<div class="pin-modal" role="dialog" aria-modal="true" aria-label="Sign in as ${esc(e.name)}"><form id="authForm" class="pinform" novalidate>
     <button type="button" class="pin-x" data-pin-close aria-label="Choose a different name">${I('x')}</button>
     <div class="pin-head">${avatar(e,'lg')}<div><b>Hi ${esc(e.name)}</b><span>${first ? 'First time here: set a 4-digit PIN you’ll remember.' : 'Enter your 4-digit PIN.'}</span></div></div>
     ${first ? `<label class="field" for="a-code">Team code <span class="hint">from your admin</span><input type="text" id="a-code" name="teamCode" autocomplete="off" maxlength="100" required></label>` : ''}
