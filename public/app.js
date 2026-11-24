@@ -20,7 +20,7 @@ const P = {
   link:'<path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>',
   chev:'<path d="M9 6l6 6-6 6"/>',
   back:'<path d="M15 6l-6 6 6 6"/>',
-  edit:'<path d="M4 20h4L20 8l-4-4L4 16z"/>',
+  edit:'<path d="M4 20h4L20 8l-4-4L4 16z"/>', trash:'<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   copy:'<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
   lock:'<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   play:'<path d="M7 4v16l13-8z"/>',
@@ -486,7 +486,7 @@ function cutCard(c, date, locked){
       <div class="meta"><span>${esc(c.platform || '')}</span>${c.postedAt?`<span>Posted ${esc(dayLabel(c.postedAt))}</span>`:''}${c.url?`<a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">${I('link')}Video</a>`:''}</div></div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${entry ? `<span class="chip good">${I('check')}Logged</span>` : '<span class="chip acc">Needs numbers</span>'}
         <span class="chip">${pts(info?.monthPts?.[ym] || 0)} pts this month</span>
-        <button class="btn sm" data-act="history" data-id="${esc(c.id)}">${I('today')}History</button><button class="btn ghost icon sm" data-act="edit-cut" data-id="${esc(c.id)}" aria-label="Edit cut details">${I('edit')}</button></div></div>
+        <button class="btn sm" data-act="history" data-id="${esc(c.id)}">${I('today')}History</button><button class="btn ghost icon sm" data-act="edit-cut" data-id="${esc(c.id)}" aria-label="Edit cut details" title="Edit cut">${I('edit')}</button><button class="btn ghost icon sm del" data-act="delete-cut" data-id="${esc(c.id)}" aria-label="Delete cut" title="Delete cut">${I('trash')}</button></div></div>
     <div class="mgrid">${METRICS.map(m => `<div class="mt"><label for="${fid(m.key)}">${I(m.key)}${m.label}<span class="rate">${esc(rateLabel(S.calc?.s?.[m.key]))}</span></label>
       <input type="number" id="${fid(m.key)}" data-keep data-metric="${m.key}" min="0" step="1" inputmode="numeric" ${locked?'disabled':''} value="${entry ? int(entry[m.key]) : ''}" placeholder="${last ? int(last[m.key]) : '0'}">
       <span class="d" data-delta="${m.key}"></span></div>`).join('')}</div>
@@ -1116,10 +1116,22 @@ $('#main').addEventListener('click', async e => {
     case 'fix-entry': fixDialog(b.dataset.uid, id); break;
     case 'add-project': projectDialog(null); break;
     case 'edit-project': projectDialog(projectById(id)); break;
+    case 'delete-cut': {
+      const c = myCuts().find(x => x.id === id); if (!c) break;
+      const days = Object.keys(c.daily || {}); const p = projectById(c.projectId);
+      if (days.some(d => isClosed(monthOf(d)))){ toast('This cut has numbers in a closed month, so its points are final. Archive it instead (edit the cut).', 'error'); break; }
+      const info = S.calc?.cutInfo.get(S.uid+'/'+c.id); const mp = info?.monthPts?.[monthOf(today())] || 0;
+      confirmDialog(`Delete “${p?.title || 'Cut'}${c.label ? ' · '+c.label : ''}”?`, days.length ? `This removes the cut and its ${days.length} day${days.length===1?'':'s'} of numbers${mp ? `, and takes ${pts(mp)} points off your month` : ''}. This can’t be undone.` : 'It has no numbers yet. This can’t be undone.', 'Delete cut',
+        async () => { const ok = await save(() => api('DELETE', '/api/cuts/'+c.id)); if (ok) toast('Cut deleted'); return ok; });
+      break;
+    }
     case 'delete-project': {
-      const p = projectById(id); const n = allCuts().filter(c => c.projectId === id).length;
-      if (n){ toast(`This project has ${n} cut${n===1?'':'s'}. Close it instead so their points are kept.`, 'error'); break; }
-      confirmDialog(`Delete “${p.title}”?`, 'It has no cuts. This can’t be undone.', 'Delete project', async () => { const ok = await save(() => api('DELETE', '/api/projects/'+p.id)); if (ok){ S.projectId = null; toast('Project deleted'); render(); } return ok; });
+      const p = projectById(id); const all = allCuts().filter(c => c.projectId === id);
+      const own = all.filter(c => c.ownerUid === S.uid); const others = all.length - own.length;
+      if (others){ toast(`Other editors have ${others} cut${others===1?'':'s'} on this project, so it can’t be deleted. Close it instead.`, 'error'); break; }
+      if (own.some(c => Object.keys(c.daily || {}).some(d => isClosed(monthOf(d))))){ toast('Your cuts here have numbers in a closed month, so their points are final. Close the project instead.', 'error'); break; }
+      confirmDialog(`Delete “${p.title}”?`, own.length ? `This also deletes your ${own.length} cut${own.length===1?'':'s'} on it and their points. This can’t be undone.` : 'It has no cuts. This can’t be undone.', 'Delete project',
+        async () => { const ok = await save(() => api('DELETE', '/api/projects/'+p.id)); if (ok){ S.projectId = null; toast('Project deleted'); render(); } return ok; });
       break;
     }
     case 'add-editor': editorDialog(null); break;

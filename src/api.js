@@ -147,10 +147,17 @@ router.delete('/projects/:id', dbWrap(async (req, res) => {
   const id = parse(uuid, req.params.id);
   const p = await loadProject(id);
   if (!canEditProject(req, p)) throw forbidden('Only the editor who added this project can delete it.');
-  const { rows } = await query('SELECT count(*)::int AS n FROM cuts WHERE project_id = $1', [id]);
-  if (rows[0].n) throw conflict(`This project has ${rows[0].n} cut${rows[0].n === 1 ? '' : 's'}. Close it instead so their points are kept.`);
-  await query('DELETE FROM projects WHERE id = $1', [id]);
-  res.json({ ok: true });
+  const me = myEditorId(req);
+  const removed = await tx(async db => {
+    await db.query('SELECT id FROM projects WHERE id = $1 FOR UPDATE', [id]);
+    const { rows: others } = await db.query('SELECT count(*)::int AS n FROM cuts WHERE project_id = $1 AND editor_id <> $2', [id, me]);
+    if (others[0].n) throw conflict(`Other editors have ${others[0].n} cut${others[0].n === 1 ? '' : 's'} on this project, so it can’t be deleted. Close it instead.`);
+    if (await hasClosedEntries(db, 'c.project_id = $1', [id])) throw conflict('Your cuts here have numbers in a closed month, so their points are final. Close the project instead.');
+    const { rowCount } = await db.query('DELETE FROM cuts WHERE project_id = $1 AND editor_id = $2', [id, me]);
+    await db.query('DELETE FROM projects WHERE id = $1', [id]);
+    return rowCount;
+  });
+  res.json({ ok: true, cutsDeleted: removed });
 }));
 
 /* ---------- cuts ---------- */
@@ -158,6 +165,12 @@ async function loadCut(id, db = { query }) {
   const { rows } = await db.query('SELECT id, editor_id, posted_at, project_id FROM cuts WHERE id = $1', [id]);
   if (!rows[0]) throw notFound('Cut not found.');
   return rows[0];
+}
+// True when any daily entry matched by `where` (on cuts c) falls in a closed month.
+async function hasClosedEntries(db, where, params) {
+  const { rows } = await db.query(`SELECT 1 FROM daily_entries e JOIN cuts c ON c.id = e.cut_id
+    JOIN months m ON m.ym = to_char(e.day, 'YYYY-MM') AND m.closed WHERE ${where} LIMIT 1`, params);
+  return rows.length > 0;
 }
 router.post('/cuts', dbWrap(async (req, res) => {
   const d = parse(cutBody.extend({ projectId: uuid, today: metrics.optional() }), req.body);
@@ -188,6 +201,16 @@ router.patch('/cuts/:id', dbWrap(async (req, res) => {
   if (d.postedAt && d.postedAt > today()) throw bad('The posted date can’t be in the future.');
   await query(`UPDATE cuts SET label = COALESCE($2,label), url = COALESCE($3,url), platform = COALESCE($4,platform), posted_at = COALESCE($5,posted_at),
     status = COALESCE($6,status), updated_at = now() WHERE id = $1`, [id, d.label ?? null, d.url ?? null, d.platform ?? null, d.postedAt ?? null, d.status ?? null]);
+  res.json({ ok: true });
+}));
+router.delete('/cuts/:id', dbWrap(async (req, res) => {
+  const id = parse(uuid, req.params.id);
+  const c = await loadCut(id);
+  if (c.editor_id !== myEditorId(req)) throw forbidden('You can only delete your own cuts.');
+  await tx(async db => {
+    if (await hasClosedEntries(db, 'c.id = $1', [id])) throw conflict('This cut has numbers in a closed month, so its points are final. Archive it instead.');
+    await db.query('DELETE FROM cuts WHERE id = $1', [id]);
+  });
   res.json({ ok: true });
 }));
 router.put('/cuts/:id/days/:day', dbWrap(async (req, res) => {
