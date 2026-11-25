@@ -196,8 +196,6 @@ function compute(){
     const days = [...set].sort(); let run = 0, prev = null;
     for (const d of days){
       run = prev && addDays(prev, 1) === d ? run + 1 : 1; prev = d;
-      if (s.checkin > 0) events.push({ editorId:edId, date:d, type:'checkin', pts:s.checkin });
-      if (run % 7 === 0 && s.streak7 > 0) events.push({ editorId:edId, date:d, type:'streak', pts:s.streak7, label:`${run}-day streak` });
     }
     const last = days[days.length-1];
     streakNow.set(edId, last === today() || last === yesterday() ? run : 0);
@@ -262,8 +260,8 @@ const nameOf = id => S.names[id] || 'Someone';
 const editorMode = () => !S.isAdmin || S.mode === 'editor';
 function navItems(){
   if (editorMode()) return [
-    ['home', 'Dashboard', 'target'], ['log', 'Log numbers', 'today'], ['leaderboard', 'Leaderboard', 'trophy'],
-    ['projects', 'Projects', 'folder'], ['month', 'Rewards', 'gift'], ['points', 'Points', 'info']
+    ['home', 'Dashboard', 'target'], ['projects', 'Projects', 'folder'], ['leaderboard', 'Leaderboard', 'trophy'],
+    ['month', 'Rewards', 'gift'], ['points', 'Points', 'info']
   ];
   return [
     ['home', 'Dashboard', 'target'], ['leaderboard', 'Leaderboard', 'trophy'], ['projects', 'Projects', 'folder'],
@@ -276,7 +274,7 @@ function renderShell(){
   const btn = ([v,l,ic]) => `<button data-view="${v}" ${S.view===v?'aria-current="page"':''}>${I(ic)}<span>${l}</span></button>`;
   const sw = '';
   $('#nav').innerHTML = sw + items.map(btn).join('');
-  $('#bnav').innerHTML = items.filter(([v]) => v !== 'points').map(btn).join('');
+  $('#bnav').innerHTML = (items.length > 5 ? items.filter(([v]) => v !== 'points') : items).map(btn).join('');
   const logo = I('play'); $('#logo1').innerHTML = logo; $('#logo2').innerHTML = logo;
   let cls = 'wait', text = 'Connecting…';
   if (!S.db && S.unavailable){ cls = 'off'; text = 'Not signed in'; }
@@ -308,7 +306,7 @@ function restoreInputs(st){
 function updateSaveBar(){
   const cards = new Set([...S.dirty].map(id => document.getElementById(id)?.closest('.cut')?.dataset.cut).filter(Boolean));
   const bar = $('#savebar');
-  if (cards.size && S.view === 'log'){ $('#savebarText').textContent = `${cards.size} cut${cards.size===1?'':'s'} with unsaved numbers`; bar.classList.add('show'); }
+  if (cards.size){ $('#savebarText').textContent = `${cards.size} cut${cards.size===1?'':'s'} with unsaved numbers`; bar.classList.add('show'); }
   else bar.classList.remove('show');
 }
 
@@ -328,9 +326,8 @@ function render(){
   const ed = editorMode();
   switch (S.view){
     case 'home': html += ed ? (myEditor() ? viewEditorHome() : viewJoin()) : viewAdminHome(); break;
-    case 'log': html += myEditor() ? viewLog() : viewJoin(); break;
     case 'leaderboard': html += viewLeaderboard(); break;
-    case 'projects': html += S.projectId && projectById(S.projectId) ? viewProject() : viewProjects(); break;
+    case 'log': case 'projects': html += S.projectId && projectById(S.projectId) ? viewProject() : (editorMode() && myEditor() ? viewMyProjects() : viewProjects()); break;
     case 'month': html += viewMonth(); break;
     case 'team': html += (S.isAdmin && !editorMode()) ? viewTeam() : viewLeaderboard(); break;
     default: html += viewPoints();
@@ -407,67 +404,80 @@ function myStats(){
   return { me, calc, rw, ym, st, rows, mine, nextIdx, nextTier: nextIdx >= 0 ? rw.tiers[nextIdx] : null, streak: calc.streakNow.get(me.id) || 0, logged: calc.logged.get(me.id) || new Set() };
 }
 function viewEditorHome(){
-  const { me, calc, rw, ym, st, rows, mine, nextIdx, nextTier, streak, logged } = myStats(); const s = calc.s;
+  const { me, calc, rw, ym, st, rows, mine, nextIdx, nextTier } = myStats();
   const prevMin = mine.tier >= 0 ? rw.tiers[mine.tier].min : 0;
   const pct = nextTier ? (mine.total - prevMin) / (nextTier.min - prevMin) : 1;
-  const week = Array.from({ length:7 }, (_, i) => addDays(today(), i - 6));
   const leader = rows[0]; const gap = leader && leader.editor.id !== me.id ? leader.total - mine.total : 0;
   const hour = new Date().getHours(); const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const cuts = myCuts().filter(c => c.status !== 'archived');
-  const todo = cuts.filter(c => !c.daily?.[today()]);
   const mon = monthLabel(ym).split(' ')[0];
-  let html = pageHead(`${greet}, ${esc(me.name)}`, todo.length ? `${todo.length} of ${cuts.length} cut${cuts.length===1?'':'s'} still need today's numbers.` : cuts.length ? 'All your cuts are logged for today. Nice work.' : 'Add your first cut to start earning points.',
-    `<button class="btn" data-act="add-cut">${I('plus')}Add a cut</button><button class="btn primary" data-view="log">${I('today')}Log today's numbers</button>`);
+  const wk = perfData('7d', me.id); const wkViews = wk.cur.views, wkEng = engOf(wk.cur);
+  const bestWk = [...wk.rows].sort((a,b) => b.gain.views - a.gain.views)[0];
+  let html = pageHead(`${greet}, ${esc(me.name)}`, cuts.length ? 'Update your cuts in Projects whenever the numbers change.' : 'Add your first cut to start earning points.',
+    `<button class="btn" data-act="add-cut">${I('plus')}Add a cut</button><button class="btn primary" data-view="projects">${I('edit')}Update numbers</button>`);
   html += `<section class="card hero">
-    <div><div class="k">Points today</div><div class="big tnum">+${pts(mine.today)}</div>
-      <div class="muted small">${mine.place ? (mine.place === 1 ? `You're leading ${esc(mon)}` : `${pts(gap)} pts behind ${esc(leader.editor.name)} in 1st`) : 'Log a cut to get on the board'}</div></div>
-    <div class="weekwrap"><div class="k" style="margin-bottom:10px">${streak ? `${streak}-day streak · ${7 - streak % 7} to go for +${pts(s.streak7)}` : `Log 7 days in a row for +${pts(s.streak7)}`}</div>
-      <div class="week">${week.map(d => `<div class="wd ${logged.has(d)?'on':''} ${d===today()?'today':''}"><i>${logged.has(d) ? I('check') : ''}</i><span>${weekday(d)}</span></div>`).join('')}</div></div>
+    <div><div class="k">${esc(mon)} points</div><div class="big tnum">${pts(mine.total)}</div>
+      <div class="muted small">${mine.place ? (mine.place === 1 ? `You're leading ${esc(mon)}` : `#${mine.place} · ${pts(gap)} pts behind ${esc(leader.editor.name)}`) : 'Update a cut to get on the board'}</div></div>
+    <div class="weekwrap"><div class="k" style="margin-bottom:10px">Your cuts this week</div>
+      <div class="hstats"><div><b class="tnum">${fmt(wkViews)}</b><span>views gained</span></div><div><b class="tnum">${fmt(wkEng)}</b><span>interactions</span></div>
+        <div class="hbest"><b>${bestWk && bestWk.gain.views ? esc(bestWk.project?.title || 'Cut') : '—'}</b><span>${bestWk && bestWk.gain.views ? 'growing fastest' : 'no new views yet'}</span></div></div></div>
     <div class="ringwrap"><div class="ring">${ringSvg(pct, nextTier ? tierVar(nextIdx) : tierVar(3))}<div class="rc"><b>${nextTier ? pts(nextTier.min - mine.total) : 'Max'}</b><span>${nextTier ? `pts to ${esc(nextTier.name)}` : 'Top tier reached'}</span></div></div></div>
   </section>
   <section class="kpis">
-    <div class="card kpi"><div class="ki acc">${I('bolt')}</div><div><b class="tnum">${pts(mine.total)}</b><span>${esc(mon)} points</span></div></div>
+    <div class="card kpi"><div class="ki acc">${I('bolt')}</div><div><b class="tnum">${pts(mine.today)}</b><span>points today</span></div></div>
     <div class="card kpi"><div class="ki gold">${I('trophy')}</div><div><b>${mine.place ? '#'+mine.place : '—'}</b><span>of ${rows.length} editors</span></div></div>
-    <div class="card kpi"><div class="ki">${I('flame')}</div><div><b>${streak}</b><span>day streak</span></div></div>
+    <div class="card kpi"><div class="ki">${I('views')}</div><div><b class="tnum">${fmt(wkViews)}</b><span>views gained, 7 days</span></div></div>
     <div class="card kpi"><div class="ki good">${I('star')}</div><div><b style="font-size:16px">${mine.tier >= 0 ? esc(rw.tiers[mine.tier].name) : 'No tier'}</b><span>${daysLeftInMonth()} days left</span></div></div>
   </section>`;
+  html += myPerformanceCard(me);
   html += `<section class="dgrid">
     <div class="card pad">${cardH('Points per day', 'Last 14 days')}${barChart(dailySeries(me.id, 14), 'Your points per day')}</div>
     <div class="card pad">${cardH('Where your points come from', esc(monthLabel(ym)))}${hbars([
-      { label:'Growth', value:mine.eng, icon:I('bolt') }, { label:'Daily log', value:mine.checkin, icon:I('check') }, { label:'Streaks', value:mine.streak, icon:I('flame') },
-      { label:'Milestones', value:mine.milestone, icon:I('target') }, { label:'Head-to-head', value:mine.h2h, icon:I('trophy') }])}</div>
+      { label:'Growth', value:mine.eng, icon:I('bolt') }, { label:'Milestones', value:mine.milestone, icon:I('target') }, { label:'Head-to-head', value:mine.h2h, icon:I('trophy') }])}</div>
   </section>`;
   html += `<section class="dgrid">
-    <div class="card pad">${cardH("Today's checklist", `${cuts.length - todo.length} of ${cuts.length} logged`, cuts.length ? `<button class="btn sm primary" data-view="log">Log now</button>` : '')}
-      ${cuts.length ? `<div class="list">${cuts.map(c => { const done = !!c.daily?.[today()]; return `<div class="li"><span class="ok ${done?'y':'n'}">${done ? I('check') : ''}</span><div style="min-width:0"><b>${esc(projectById(c.projectId)?.title || 'Project')}</b><div class="small muted">${esc(c.label || c.platform || 'Cut')}</div></div><span class="chip ${done?'good':'acc'}">${done ? 'Logged' : 'Needs numbers'}</span></div>`; }).join('')}</div>`
+    <div class="card pad">${cardH('Your projects', `${cuts.length} cut${cuts.length===1?'':'s'}`, cuts.length ? `<button class="btn sm primary" data-view="projects">Update numbers</button>` : '')}
+      ${cuts.length ? `<div class="list">${[...new Set(cuts.map(c => c.projectId))].map(pid => { const p = projectById(pid); const cs = cuts.filter(c => c.projectId === pid); const ld = cs.map(c => Object.keys(c.daily||{}).sort().pop() || '').sort().pop();
+          return `<button class="li li-btn" data-goto-project="${esc(pid)}"><span class="ok ${ld === today() ? 'y' : 'n'}">${ld === today() ? I('check') : I('edit')}</span><div style="min-width:0;flex:1;text-align:left"><b>${esc(p?.title || 'Project')}</b><div class="small muted">${cs.length} cut${cs.length===1?'':'s'} · ${ld ? 'updated '+esc(dayLabel(ld).toLowerCase()) : 'no numbers yet'}</div></div>${I('chev')}</button>`; }).join('')}</div>`
         : `<div class="empty" style="padding:18px"><p>No cuts yet. Add your posted video to start.</p><button class="btn primary sm" data-act="add-cut">${I('plus')}Add a cut</button></div>`}</div>
     <div class="card pad">${cardH('The race', esc(monthLabel(ym)), '<button class="link" data-view="leaderboard">Full board</button>')}
       ${(() => { const list = st.list.slice(0, 5); if (!list.some(r => r.editor.id === me.id)){ const r = st.list.find(x => x.editor.id === me.id); if (r) list.push(r); } return `<div class="list">${list.map(r => `<div class="li ${r.editor.id===me.id?'me':''}"><span class="rank ${r.rank && r.rank<=3?'r'+r.rank:''}" style="width:28px;height:28px;font-size:12px">${r.rank || '–'}</span>${avatar(r.editor,'sm')}<b style="flex:1">${esc(r.editor.name)}${r.editor.id===me.id?' · you':''}</b><b class="tnum">${pts(r.total)}</b></div>`).join('')}</div>`; })()}</div>
   </section>`;
-  const ranked = cuts.map(c => ({ c, info:calc.cutInfo.get(S.uid+'/'+c.id) })).sort((a,b) => (b.info?.monthPts?.[ym]||0) - (a.info?.monthPts?.[ym]||0));
-  if (ranked.length) html += `<div class="card rows"><div class="row head" style="grid-template-columns:minmax(0,1.6fr) repeat(4,minmax(0,.7fr)) minmax(0,.8fr)"><span>My cuts</span><span>Views</span><span>Likes</span><span>Shares</span><span>Last logged</span><span>Month pts</span></div>
-    ${ranked.map(({c, info}) => `<div class="row" style="grid-template-columns:minmax(0,1.6fr) repeat(4,minmax(0,.7fr)) minmax(0,.8fr)"><div class="first"><b>${esc(projectById(c.projectId)?.title || 'Project')}</b><div class="small muted">${esc(c.label || 'Cut')} · ${esc(c.platform || '')}</div></div>
-      <div><span class="ml">Views</span><span class="n tnum">${fmt(info?.hwm.views||0)}</span></div><div><span class="ml">Likes</span><span class="n tnum">${fmt(info?.hwm.likes||0)}</span></div><div><span class="ml">Shares</span><span class="n tnum">${fmt(info?.hwm.shares||0)}</span></div>
-      <div><span class="ml">Last logged</span><span class="n">${info?.lastDate ? esc(dayLabel(info.lastDate)) : 'Never'}</span></div><div><span class="ml">Month pts</span><span class="n tnum" style="font-family:var(--font-display)">${pts(info?.monthPts?.[ym]||0)}</span></div></div>`).join('')}</div>`;
   return html;
 }
 
-function viewLog(){
-  const { calc } = myStats(); const s = calc.s;
-  const date = S.logDate && [today(), yesterday()].includes(S.logDate) ? S.logDate : today();
-  const cuts = myCuts().filter(c => c.status !== 'archived').sort((a,b) => String(b.postedAt||'').localeCompare(String(a.postedAt||'')));
+// Editors: projects and number updates on one page. Every save records today's totals.
+function viewMyProjects(){
+  const date = today(); const locked = isClosed(monthOf(date));
+  const mine = myCuts().filter(c => c.status !== 'archived');
   const archived = myCuts().filter(c => c.status === 'archived');
-  const doneCount = cuts.filter(c => c.daily && c.daily[date]).length;
-  const locked = isClosed(monthOf(date));
-  let html = pageHead('Log numbers', `Type each video's totals from the platform's insights. Logging today earns +${pts(s.checkin)}; fix earlier days from History.`, `<button class="btn primary" data-act="add-cut">${I('plus')}Add a cut</button>`);
-  html += `<div class="logbar"><div class="seg" role="group" aria-label="Logging date">
-      <button type="button" data-logdate="${today()}" aria-pressed="${date===today()}">Today</button>
-      <button type="button" data-logdate="${yesterday()}" aria-pressed="${date===yesterday()}">Yesterday</button></div>
-    ${cuts.length ? `<div class="progress-pill"><span>${doneCount}/${cuts.length} logged</span><div class="bar"><i style="width:${doneCount/cuts.length*100}%"></i></div></div>` : ''}</div>`;
+  const projects = allProjects();
+  let html = pageHead('Projects', 'Update your cuts here whenever the numbers change. Type the totals the platform shows now; points come from the growth since your last update.',
+    `<button class="btn" data-act="add-project">${I('plus')}New project</button><button class="btn primary" data-act="add-cut">${I('plus')}Add a cut</button>`);
   if (locked) html += `<div class="banner">${I('lock')}<span>${esc(monthLabel(monthOf(date)))} is closed, so its numbers are locked.</span></div>`;
-  if (!cuts.length) html += `<div class="card empty"><div class="ico">${I('play')}</div><h3>Add your first cut</h3><p>A cut is your posted version of a project. Add it once, then type its totals here every day to earn points.</p><button class="btn primary" data-act="add-cut">${I('plus')}Add a cut</button></div>`;
-  else html += `<section class="cuts">${cuts.map(c => cutCard(c, date, locked)).join('')}</section>`;
-  if (archived.length) html += `<details class="card pad"><summary class="muted" style="cursor:pointer;font-weight:700">${archived.length} archived cut${archived.length===1?'':'s'}</summary>
+  const byProj = new Map(); for (const c of mine){ const a = byProj.get(c.projectId) || []; a.push(c); byProj.set(c.projectId, a); }
+  const lastUpd = cs => cs.map(c => Object.keys(c.daily||{}).sort().pop() || '').sort().pop() || '';
+  const groups = [...byProj.entries()].map(([pid, cs]) => ({ p:projectById(pid), cs:cs.sort((a,b) => String(b.postedAt||'').localeCompare(String(a.postedAt||''))) }))
+    .sort((a,b) => (a.p?.status === 'closed') - (b.p?.status === 'closed') || lastUpd(a.cs).localeCompare(lastUpd(b.cs)) || String(a.p?.title||'').localeCompare(String(b.p?.title||'')));
+  if (!groups.length) html += `<div class="card empty"><div class="ico">${I('play')}</div><h3>Add your first cut</h3><p>Pick a project (or create one), add your posted video, then type its totals here whenever they change.</p><button class="btn primary" data-act="add-cut">${I('plus')}Add a cut</button></div>`;
+  for (const { p, cs } of groups){
+    const others = allCuts().filter(c => c.projectId === p?.id && c.ownerUid !== S.uid && editorByUid(c.ownerUid));
+    const oe = [...new Set(others.map(c => editorByUid(c.ownerUid)?.id))].map(editorById).filter(Boolean);
+    html += `<section class="psec">
+      <div class="psec-h"><div style="min-width:0"><h2>${esc(p?.title || 'Project removed')}</h2>
+        <div class="small muted">${esc([p?.client, p?.platform].filter(Boolean).join(' · ') || 'No brand set')}${oe.length ? ` · also cut by ${esc(oe.map(e => e.name).join(', '))}` : ' · only your cut so far'}</div></div>
+        <div class="psec-a">${p ? `<button class="btn sm" data-open-project="${esc(p.id)}">${I('trophy')}Compare</button>` : ''}${p && p.status !== 'closed' ? `<button class="btn sm" data-act="add-cut" data-project="${esc(p.id)}">${I('plus')}Another cut</button>` : ''}</div></div>
+      <div class="cuts">${cs.map(c => cutCard(c, date, locked)).join('')}</div></section>`;
+  }
+  const rest = projects.filter(p => !byProj.has(p.id) && p.status !== 'closed').sort((a,b) => String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+  if (rest.length){
+    html += `<div class="sec-title"><h2>Other projects</h2><span class="small muted">Add your own version to compete on these</span></div>
+      <div class="pgrid">${rest.map(p => { const pc = allCuts().filter(c => c.projectId === p.id && editorByUid(c.ownerUid)); const eds = [...new Set(pc.map(c => editorByUid(c.ownerUid)?.id))].map(editorById).filter(Boolean);
+        return `<div class="card pcard"><div style="min-width:0"><h3>${esc(p.title)}</h3><div class="sub">${esc([p.client, p.platform].filter(Boolean).join(' · ') || 'No brand set')}</div></div>
+          <div class="pfoot"><span style="display:flex;align-items:center;gap:8px;min-width:0"><span class="stack">${eds.slice(0,6).map(e => avatar(e,'sm')).join('')}</span><span class="small muted">${eds.length ? `${eds.length} editor${eds.length===1?'':'s'}` : 'No cuts yet'}</span></span>
+          <span style="display:flex;gap:6px"><button class="btn sm" data-open-project="${esc(p.id)}">View</button><button class="btn sm primary" data-act="add-cut" data-project="${esc(p.id)}">${I('plus')}Add my cut</button></span></div></div>`; }).join('')}</div>`;
+  }
+  if (archived.length) html += `<details class="card pad"><summary class="muted" style="cursor:pointer;font-weight:600">${archived.length} archived cut${archived.length===1?'':'s'}</summary>
     <div style="display:grid;gap:10px;margin-top:12px">${archived.map(c => `<div class="cut-f"><span>${esc(projectById(c.projectId)?.title || 'Project')} · ${esc(c.label || 'Cut')}</span><button class="btn sm" data-act="unarchive-cut" data-id="${esc(c.id)}">Restore</button></div>`).join('')}</div></details>`;
   return html;
 }
@@ -484,14 +494,14 @@ function cutCard(c, date, locked){
   return `<article class="card cut ${entry?'done':'todo'}" data-cut="${esc(c.id)}" data-date="${date}" data-before='${esc(JSON.stringify(before))}'>
     <div class="cut-h"><div><h3>${esc(p?.title || 'Project removed')}${c.label ? ` <span class="muted" style="font-weight:600">· ${esc(c.label)}</span>` : ''}</h3>
       <div class="meta"><span>${esc(c.platform || '')}</span>${c.postedAt?`<span>Posted ${esc(dayLabel(c.postedAt))}</span>`:''}${c.url?`<a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">${I('link')}Video</a>`:''}</div></div>
-      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${entry ? `<span class="chip good">${I('check')}Logged</span>` : '<span class="chip acc">Needs numbers</span>'}
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${(() => { const ld = Object.keys(c.daily||{}).sort().pop(); return ld ? `<span class="chip ${ld === today() ? 'good' : ''}">${ld === today() ? I('check')+'Updated today' : 'Updated '+esc(dayLabel(ld).toLowerCase())}</span>` : '<span class="chip acc">No numbers yet</span>'; })()}
         <span class="chip">${pts(info?.monthPts?.[ym] || 0)} pts this month</span>
         <button class="btn sm" data-act="history" data-id="${esc(c.id)}">${I('today')}History</button><button class="btn ghost icon sm" data-act="edit-cut" data-id="${esc(c.id)}" aria-label="Edit cut details" title="Edit cut">${I('edit')}</button><button class="btn ghost icon sm del" data-act="delete-cut" data-id="${esc(c.id)}" aria-label="Delete cut" title="Delete cut">${I('trash')}</button></div></div>
     <div class="mgrid">${METRICS.map(m => `<div class="mt"><label for="${fid(m.key)}">${I(m.key)}${m.label}<span class="rate">${esc(rateLabel(S.calc?.s?.[m.key]))}</span></label>
       <input type="number" id="${fid(m.key)}" data-keep data-metric="${m.key}" min="0" step="1" inputmode="numeric" ${locked?'disabled':''} value="${entry ? int(entry[m.key]) : ''}" placeholder="${last ? int(last[m.key]) : '0'}">
       <span class="d" data-delta="${m.key}"></span></div>`).join('')}</div>
     <div class="catsum" aria-live="polite"></div>
-    <div class="cut-f"><span class="last">${last ? `Last logged ${esc(dayLabel(lastDate).toLowerCase())}` : 'First entry: type the totals the platform shows right now'}</span>
+    <div class="cut-f"><span class="last">${entry ? 'Type new totals whenever they change' : last ? `Last totals from ${esc(dayLabel(lastDate).toLowerCase())}. Type what the platform shows now.` : 'Type the totals the platform shows right now'}</span>
       <span style="display:flex;gap:10px;align-items:center"><span class="preview"></span><button class="btn primary" data-act="save-cut" data-id="${esc(c.id)}" ${locked?'disabled':''}>Save</button></span></div>
   </article>`;
 }
@@ -522,60 +532,177 @@ function updatePreview(card){
 }
 
 /* ================= admin dashboard ================= */
+/* ================= content performance ================= */
+const ENG_KEYS = ['likes','comments','shares','reposts'];
+const pctTxt = (r, d = 1) => (r * 100).toFixed(d).replace(/\.0$/, '') + '%';
+const engOf = o => ENG_KEYS.reduce((a,k) => a + (o?.[k]||0), 0);
+function perfRange(range){
+  const t = today();
+  if (range === 'month'){
+    const from = monthOf(t) + '-01'; const dayN = Number(t.slice(8));
+    const pFrom = addDays(from, -1).slice(0,7) + '-01'; const pLast = addDays(from, -1);
+    const pTo = Number(pLast.slice(8)) >= dayN ? pFrom.slice(0,8) + String(dayN).padStart(2,'0') : pLast;
+    return { from, to:t, pFrom, pTo, label:monthLabel(monthOf(t)), prevLabel:'last month' };
+  }
+  if (range === '14d') return { from:addDays(t,-13), to:t, pFrom:'', pTo:'', label:'Last 14 days', prevLabel:'' };
+  return { from:addDays(t,-6), to:t, pFrom:addDays(t,-13), pTo:addDays(t,-7), label:'Last 7 days', prevLabel:'the 7 days before' };
+}
+// Growth per cut inside a date window, measured over each cut's high-water mark (same rule as scoring).
+function perfData(range, editorId){
+  const R = perfRange(range); const s = S.calc.s;
+  const zero = () => ({ views:0, likes:0, comments:0, shares:0, reposts:0 });
+  const rows = [], daily = {}, prev = zero(), cur = zero();
+  for (const cut of allCuts()){
+    const ed = editorByUid(cut.ownerUid); if (!ed || ed.active === false) continue;
+    if (editorId && ed.id !== editorId) continue;
+    const dates = Object.keys(cut.daily||{}).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+    const hwm = zero(), gain = zero(); let ptsSum = 0, prevViews = 0;
+    for (const d of dates){
+      const v = cut.daily[d] || {}; const g = {};
+      for (const m of METRICS){ g[m.key] = Math.max(0, int(v[m.key]) - hwm[m.key]); hwm[m.key] = Math.max(hwm[m.key], int(v[m.key])); }
+      if (d >= R.from && d <= R.to){ for (const m of METRICS){ gain[m.key] += g[m.key]; cur[m.key] += g[m.key]; } ptsSum += engagementPts(g, s); daily[d] = (daily[d]||0) + g.views; }
+      else if (d >= R.pFrom && d <= R.pTo){ for (const m of METRICS) prev[m.key] += g[m.key]; prevViews += g.views; }
+    }
+    if (!dates.length) continue;
+    const er = hwm.views > 0 ? engOf(hwm) / hwm.views : 0;
+    rows.push({ cut, ed, project:projectById(cut.projectId), gain, prevViews, total:{ ...hwm }, er, eng:engOf(gain), spread:gain.shares + gain.reposts, pts:ptsSum });
+  }
+  const teamViews = rows.reduce((a,r) => a + r.total.views, 0), teamEng = rows.reduce((a,r) => a + engOf(r.total), 0);
+  return { R, rows, daily, cur, prev, teamEr: teamViews ? teamEng / teamViews : 0 };
+}
+const trendTag = (now, before, prevLabel) => {
+  if (!before && !now) return `<span class="trend flat">No activity yet</span>`;
+  if (!before) return `<span class="trend up">New vs ${esc(prevLabel)}</span>`;
+  const ch = (now - before) / before;
+  return `<span class="trend ${ch > 0.005 ? 'up' : ch < -0.005 ? 'down' : 'flat'}">${ch > 0 ? '▲' : ch < 0 ? '▼' : '•'} ${pctTxt(Math.abs(ch), 0)} vs ${esc(prevLabel)}</span>`;
+};
+const cutName = r => `${esc(r.project?.title || 'Project')}${r.cut.label ? ` <span class="muted">· ${esc(r.cut.label)}</span>` : ''}`;
+const watchLink = r => r.cut.url ? `<a class="link" href="${esc(r.cut.url)}" target="_blank" rel="noopener noreferrer">${I('link')}Watch</a>` : '';
+function viewsSeries(daily, days){
+  const dates = Array.from({ length:days }, (_, i) => addDays(today(), i - days + 1));
+  return dates.map(d => ({ label:dayLabel(d), short: d === today() ? 'Today' : String(Number(d.slice(8))), value:daily[d] || 0 }));
+}
+function insightsFor(P){
+  const out = [];
+  const live = P.rows.filter(r => r.total.views >= 500);
+  const byEr = [...live].sort((a,b) => b.er - a.er);
+  if (byEr.length >= 2 && P.teamEr > 0){ const t = byEr[0]; out.push(`<b>${esc(t.ed.name)}</b>’s ${cutName(t)} has the strongest engagement: <b>${pctTxt(t.er)}</b>, ${(t.er / P.teamEr).toFixed(1)}× the team average.`); }
+  const plat = new Map(); for (const r of live){ const k = r.cut.platform || 'Other'; const o = plat.get(k) || { v:0, e:0, n:0 }; o.v += r.total.views; o.e += engOf(r.total); o.n++; plat.set(k, o); }
+  const plats = [...plat.entries()].filter(([,o]) => o.v > 0).map(([k,o]) => [k, o.e/o.v, o.n]).sort((a,b) => b[1]-a[1]);
+  if (plats.length >= 2) out.push(`<b>${esc(plats[0][0])}</b> cuts get the most interaction (${pctTxt(plats[0][1])} engagement) vs ${esc(plats[plats.length-1][0])} at ${pctTxt(plats[plats.length-1][1])}.`);
+  const spreaders = [...P.rows].filter(r => r.spread > 0).sort((a,b) => b.spread - a.spread);
+  if (spreaders.length) out.push(`Most shared: ${cutName(spreaders[0])} by <b>${esc(spreaders[0].ed.name)}</b>, with <b>${fmt(spreaders[0].spread)}</b> shares and reposts in this period. Shares are what make a video travel.`);
+  const lowEr = live.filter(r => r.gain.views > 0 && P.teamEr > 0 && r.er < P.teamEr * 0.5).sort((a,b) => b.gain.views - a.gain.views)[0];
+  if (lowEr) out.push(`${cutName(lowEr)} is getting views but few reactions (${pctTxt(lowEr.er)} engagement). Worth a look at the hook and ending.`);
+  const stalled = P.rows.filter(r => r.gain.views === 0 && r.total.views > 0).length;
+  if (stalled) out.push(`${stalled} cut${stalled === 1 ? ' has' : 's have'} no new views in this period.`);
+  return out;
+}
+// Editor view: how each of my cuts is doing this week, against the team's engagement rate.
+function myPerformanceCard(me){
+  const mine = perfData('7d', me.id); const team = perfData('7d');
+  if (!mine.rows.length) return '';
+  const rows = [...mine.rows].sort((a,b) => b.gain.views - a.gain.views || b.total.views - a.total.views);
+  const best = rows.find(r => r.gain.views > 0);
+  const vsTeam = r => { if (!team.teamEr || !r.total.views) return ''; const x = r.er / team.teamEr;
+    return x >= 1.1 ? `<span class="er hi">${x.toFixed(1)}× team avg</span>` : x <= 0.9 ? `<span class="er lo">below team avg</span>` : `<span class="er mid">about team avg</span>`; };
+  const tip = best ? (team.teamEr && best.er >= team.teamEr
+      ? `Your <b>${cutName(best)}</b> is growing fastest and people engage with it more than usual. Look at what you did in that edit (hook, pacing, ending) and use it again.`
+      : `Your <b>${cutName(best)}</b> is growing fastest. Its engagement is below the team’s, so try a stronger hook or a clearer call to action next time.`)
+    : 'None of your cuts gained views in the last 7 days. Log today’s totals to see how they’re moving.';
+  return `<div class="card pad">${cardH('How your cuts are performing', `Last 7 days · team engagement rate is ${pctTxt(team.teamEr)}`)}
+    <div class="ptable mine" role="table"><div class="pt-row pt-head" role="row"><span>Cut</span><span class="r">Views gained</span><span class="r">Engagement</span><span class="r">vs team</span><span class="r">Total views</span><span></span></div>
+    ${rows.map(r => `<div class="pt-row" role="row"><span class="pt-cut"><span><b>${cutName(r)}</b><small>${esc(r.cut.platform || '')}${r === best ? ' · <span class="good-t">Growing fastest</span>' : ''}</small></span></span>
+      <span class="r tnum"><b>${r.gain.views ? '+'+fmt(r.gain.views) : '0'}</b></span><span class="r tnum">${pctTxt(r.er)}</span><span class="r">${vsTeam(r)}</span><span class="r tnum muted">${fmt(r.total.views)}</span><span class="r pt-act">${watchLink(r)}</span></div>`).join('')}
+    </div><p class="tipline">${I('bolt')}<span>${tip}</span></p></div>`;
+}
+// Group cuts by brand (project client); projects without a client stand on their own.
+function brandsFor(P){
+  const map = new Map();
+  for (const r of P.rows){
+    const client = (r.project?.client || '').trim();
+    const key = client ? 'c:' + client.toLowerCase() : 'p:' + (r.project?.id || r.cut.id);
+    const b = map.get(key) || { name: client || r.project?.title || 'Untitled', isClient: !!client, views:0, prevViews:0, totV:0, totE:0, cuts:0, projects:new Set(), editors:new Map(), best:null };
+    b.views += r.gain.views; b.prevViews += r.prevViews; b.totV += r.total.views; b.totE += engOf(r.total); b.cuts++;
+    if (r.project) b.projects.add(r.project.id);
+    const e = b.editors.get(r.ed.id) || { ed:r.ed, views:0, best:null }; e.views += r.gain.views; if (!e.best || r.gain.views > e.best.gain.views) e.best = r; b.editors.set(r.ed.id, e);
+    if (!b.best || r.gain.views > b.best.gain.views || (r.gain.views === b.best.gain.views && r.er > b.best.er)) b.best = r;
+    map.set(key, b);
+  }
+  return [...map.values()].map(b => {
+    const lead = [...b.editors.values()].sort((x,y) => y.views - x.views)[0];
+    return { ...b, er: b.totV ? b.totE / b.totV : 0, lead, share: b.views ? lead.views / b.views : 0 };
+  }).sort((a,b) => b.views - a.views || b.er - a.er);
+}
 function viewAdminHome(){
-  const calc = S.calc; const t = today(); const ym = monthOf(t); const rw = rewards();
-  const st = monthStandings(ym, calc); const rr = rewardRows(st);
-  const eds = S.editors.filter(e => e.active !== false).sort((a,b)=>a.name.localeCompare(b.name));
-  const joined = eds.filter(e => S.pinSet[e.id]);
-  const loggedToday = joined.filter(e => calc.logged.get(e.id)?.has(t));
-  const notLogged = joined.filter(e => !calc.logged.get(e.id)?.has(t));
-  const notJoined = eds.filter(e => !S.pinSet[e.id]);
-  const payout = rr.reduce((a,r) => a + r.reward, 0);
-  const amountsSet = rw.tiers.some(x => x.amount > 0) || rw.topAmount > 0;
-  const week = Array.from({ length:7 }, (_, i) => addDays(t, i - 6));
-  const me = myEditor();
-  let html = pageHead('Admin dashboard', `${esc(monthLabel(ym))} · ${daysLeftInMonth()} days left`, '');
-  html += `<section class="kpis">
-    <div class="card kpi"><div class="ki acc">${I('check')}</div><div><b>${loggedToday.length}/${joined.length}</b><span>logged today</span></div></div>
-    <div class="card kpi"><div class="ki good">${I('bolt')}</div><div><b class="tnum">${pts(st.list.reduce((a,r)=>a+r.today,0))}</b><span>team points today</span></div></div>
-    <div class="card kpi"><div class="ki">${I('trophy')}</div><div><b class="tnum">${pts(st.list.reduce((a,r)=>a+r.total,0))}</b><span>team points this month</span></div></div>
-    <div class="card kpi"><div class="ki gold">${I('gift')}</div><div><b class="tnum">${amountsSet ? money(payout) : 'Not set'}</b><span>${amountsSet ? 'payout so far' : '<button class="link" data-act="edit-rewards">Set reward amounts</button>'}</span></div></div>
-  </section>`;
+  const range = S.perfRange || '7d'; const P = perfData(range); const R = P.R;
+  const sortKey = S.perfSort || 'views';
+  const sorters = { views:(a,b) => b.gain.views - a.gain.views, er:(a,b) => (b.total.views >= 500) - (a.total.views >= 500) || b.er - a.er, spread:(a,b) => b.spread - a.spread };
+  const growing = P.rows.filter(r => r.gain.views > 0).length;
+  const brands = brandsFor(P);
+  let html = pageHead('Content performance', `${esc(R.label)} · <b>${fmt(P.cur.views)}</b> views gained · <b>${pctTxt(P.teamEr)}</b> team engagement · <b>${growing}/${P.rows.length}</b> cuts growing`,
+    `<div class="seg" role="group" aria-label="Period"><button type="button" data-perfrange="7d" aria-pressed="${range==='7d'}">This week</button><button type="button" data-perfrange="month" aria-pressed="${range==='month'}">This month</button></div>`);
+  if (!P.rows.length){
+    return html + `<div class="card"><div class="empty"><div class="ico">${I('bolt')}</div><h3>No numbers yet</h3><p>Once editors add their cuts and log totals, you’ll see which brands and edits perform best here.</p></div></div>`;
+  }
+  const noClient = brands.some(b => !b.isClient);
+  html += `<div class="sec-title"><h2>Top brands</h2><span class="small muted">Ranked by views gained · the editor behind each brand’s growth</span></div>
+  <section class="brands">${brands.slice(0, 4).map((b, i) => {
+    const L = b.lead; const best = L.best;
+    return `<article class="card bcard ${i === 0 ? 'lead' : ''}">
+      <div class="br-top"><span class="br-rank">#${i + 1}</span>${trendTag(b.views, b.prevViews, R.prevLabel)}</div>
+      <h3 title="${esc(b.name)}">${esc(b.name)}</h3>
+      <div class="br-meta">${b.projects.size} project${b.projects.size === 1 ? '' : 's'} · ${b.cuts} cut${b.cuts === 1 ? '' : 's'}</div>
+      <div class="br-nums"><div><b class="tnum">${fmt(b.views)}</b><span>views gained</span></div><div><b class="tnum">${pctTxt(b.er)}</b><span>engagement</span></div></div>
+      <div class="br-ed">${avatar(L.ed,'sm')}<div><span class="br-k">Editor behind it</span><b>${esc(L.ed.name)}</b><small>${b.views ? `${pctTxt(b.share, 0)} of this brand’s views` : 'No new views yet'}${best?.cut.label ? ` · ${esc(best.cut.label)}` : ''}</small></div>
+        ${best ? `<div class="br-act">${watchLink(best)}</div>` : ''}</div>
+    </article>`; }).join('')}</section>
+  ${noClient ? `<p class="small muted br-hint">${I('info')}Some projects have no brand set, so they’re shown by project name. Editors can add the brand in the project’s details.</p>` : ''}`;
   html += `<section class="dgrid">
-    <div class="card pad">${cardH('Team points per day', 'Last 14 days, all editors')}${barChart(dailySeries(null, 14), 'Team points per day')}</div>
-    <div class="card pad">${cardH('Points by editor', esc(monthLabel(ym)), '<button class="link" data-view="leaderboard">Leaderboard</button>')}${hbars(rr.map(r => ({ label:r.editor.name, value:r.total, icon:avatar(r.editor,'sm'), color: r.tier >= 0 ? tierVar(r.tier) : 'var(--line)' })))}
-      <div class="small muted" style="margin-top:10px;display:flex;gap:12px;flex-wrap:wrap">${rw.tiers.map((x,i) => `<span style="display:inline-flex;gap:6px;align-items:center"><i style="width:10px;height:10px;border-radius:3px;background:${tierVar(i)}"></i>${esc(x.name)} ${pts(x.min)}+</span>`).join('')}</div></div>
+    <div class="card pad">${cardH('Views gained per day', 'Last 14 days, all cuts')}${barChart(viewsSeries(perfData('14d').daily, 14), 'Views gained per day').replace(/ pts<\/title>/g, ' views</title>')}</div>
+    <div class="card pad">${cardH('What people do', `${esc(R.label)} · new interactions`)}${hbars(ENG_KEYS.map(k => ({ label:METRICS.find(m => m.key === k).label, value:P.cur[k], icon:I(k) })))}</div>
   </section>`;
-  html += `<div class="card pad">${cardH('Daily check-ins', 'Last 7 days. A tick means the editor logged numbers that day.')}
-    <div class="ckwrap"><div class="ck" style="grid-template-columns:minmax(120px,1.4fr) repeat(7,minmax(34px,1fr)) minmax(64px,.8fr) minmax(80px,.9fr)">
-      <span class="ckh">Editor</span>${week.map(d => `<span class="ckh c ${d===t?'now':''}">${d===t ? 'Today' : weekday(d)+' '+Number(d.slice(8))}</span>`).join('')}<span class="ckh c">Streak</span><span class="ckh r">Pts today</span>
-      ${eds.map(e => { const L = calc.logged.get(e.id) || new Set(); const r = st.list.find(x => x.editor.id === e.id) || { today:0 }; const j = !!S.pinSet[e.id];
-        return `<span class="ckn">${avatar(e,'sm')}<span><b>${esc(e.name)}</b>${j ? '' : '<span class="small muted" style="display:block;font-weight:600">Not signed in yet</span>'}</span></span>${week.map(d => `<span class="c"><span class="ok ${L.has(d)?'y':'n'}">${L.has(d) ? I('check') : ''}</span></span>`).join('')}<span class="c tnum">${calc.streakNow.get(e.id)||0}d</span><span class="r tnum" style="font-weight:800;color:${r.today?'var(--good)':'var(--faint)'}">${r.today ? '+'+pts(r.today) : '0'}</span>`; }).join('')}
-    </div></div></div>`;
-  // Needs attention
-  const weekAgo = Date.now() - 7*864e5; const editMap = new Map();
-  for (const c of allCuts()){ const e = editorByUid(c.ownerUid); if (!e) continue;
-    for (const [d, v] of Object.entries(c.daily||{})) if (v && v.edited && v.editedAt && Date.parse(v.editedAt) > weekAgo){
-      const k = c.ownerUid + '/' + c.id; const g = editMap.get(k) || { e, c, days:[], at:'', fixed:false };
-      g.days.push(d); if (String(v.editedAt) > g.at) g.at = v.editedAt; g.fixed = g.fixed || !!v.fixedBy; editMap.set(k, g); } }
-  const edits = [...editMap.values()].sort((a,b) => String(b.at).localeCompare(String(a.at)));
-  const jumps = calc.events.filter(x => x.type === 'eng' && monthOf(x.date) === ym && x.pts > 0).sort((a,b) => b.pts - a.pts).slice(0, 5);
-  const cutOf = (edId, cutId) => { const uid = uidOfEditor(edId); return (S.cutsByUid[uid]||[]).find(c => c.id === cutId); };
+  // Top cuts
+  const top = [...P.rows].sort(sorters[sortKey]).slice(0, 8);
+  html += `<div class="card pad">${cardH('Top performing cuts', esc(R.label),
+      `<div class="seg sm" role="group" aria-label="Sort cuts"><button type="button" data-perfsort="views" aria-pressed="${sortKey==='views'}">Views</button><button type="button" data-perfsort="er" aria-pressed="${sortKey==='er'}">Engagement</button><button type="button" data-perfsort="spread" aria-pressed="${sortKey==='spread'}">Shares</button></div>`)}
+    <div class="ptable" role="table">
+      <div class="pt-row pt-head" role="row"><span>#</span><span>Cut</span><span class="r">Views gained</span><span class="r">Engagement</span><span class="r">Shares + reposts</span><span class="r">Total views</span><span></span></div>
+      ${top.map((r,i) => `<div class="pt-row" role="row"><span class="rank ${i<3?'r'+(i+1):''}">${i+1}</span>
+        <span class="pt-cut">${avatar(r.ed,'sm')}<span><b>${cutName(r)}</b><small>${esc(r.ed.name)} · ${esc(r.cut.platform || '')}<span class="mo-only"> · ${pctTxt(r.er)} eng.</span></small></span></span>
+        <span class="r tnum"><b>${fmt(r.gain.views)}</b></span>
+        <span class="r"><span class="er ${P.teamEr && r.er >= P.teamEr ? 'hi' : 'lo'}">${pctTxt(r.er)}</span></span>
+        <span class="r tnum">${fmt(r.spread)}</span><span class="r tnum muted">${fmt(r.total.views)}</span>
+        <span class="r pt-act">${watchLink(r)}<button class="btn sm" data-goto-project="${esc(r.cut.projectId)}">Compare</button></span></div>`).join('')}
+    </div></div>`;
+  // Same brief, different edits
+  const byProj = new Map(); for (const r of P.rows){ if (!r.project) continue; const a = byProj.get(r.project.id) || []; a.push(r); byProj.set(r.project.id, a); }
+  const groups = [...byProj.values()].filter(a => a.length >= 2).map(a => a.sort((x,y) => y.gain.views - x.gain.views || y.total.views - x.total.views)).sort((a,b) => b[0].gain.views - a[0].gain.views).slice(0, 4);
+  html += `<div class="card pad">${cardH('Same brief, different edits', 'Projects where more than one editor posted a cut. See which version won and why.')}
+    ${groups.length ? `<div class="h2hgrid">${groups.map(g => { const max = Math.max(1, ...g.map(r => r.gain.views)); const w = g[0], s2 = g[1];
+      const ratio = s2.gain.views > 0 ? w.gain.views / s2.gain.views : 0;
+      return `<div class="h2hcard"><div class="h2h-t"><b>${esc(w.project.title)}</b><button class="link" data-goto-project="${esc(w.project.id)}">Open</button></div>
+        ${g.map((r,i) => `<div class="h2h-r ${i===0 && r.gain.views>0?'win':''}">${avatar(r.ed,'sm')}<div class="h2h-m"><div class="h2h-n"><b>${esc(r.ed.name)}</b>${r.cut.label ? `<span class="muted">· ${esc(r.cut.label)}</span>` : ''}${i===0 && r.gain.views>0 ? `<span class="chip good">Best</span>` : ''}</div>
+          <div class="bar"><i style="width:${(r.gain.views/max*100).toFixed(1)}%"></i></div></div>
+          <div class="h2h-v"><b class="tnum">${fmt(r.gain.views)}</b><small>${pctTxt(r.er)} eng.</small></div></div>`).join('')}
+        <p class="small muted h2h-note">${w.gain.views > 0 && ratio >= 1.2 ? `${esc(w.ed.name)}’s edit got <b>${ratio.toFixed(1)}×</b> the views of the next one.${w.er > s2.er ? ' It also kept people engaging more.' : s2.er > w.er ? ` ${esc(s2.ed.name)}’s had higher engagement, though.` : ''}` : w.gain.views > 0 ? 'Close race this period.' : 'No new views yet this period.'}</p></div>`; }).join('')}</div>`
+      : `<p class="muted small" style="margin:0">When two or more editors post cuts on the same project, they’re compared here side by side.</p>`}
+  </div>`;
+  // Editors + insights
+  const edRows = new Map(); for (const r of P.rows){ const o = edRows.get(r.ed.id) || { ed:r.ed, cuts:0, views:0, totV:0, totE:0, best:null }; o.cuts++; o.views += r.gain.views; o.totV += r.total.views; o.totE += engOf(r.total); if (!o.best || r.gain.views > o.best.gain.views) o.best = r; edRows.set(r.ed.id, o); }
+  const eds = [...edRows.values()].sort((a,b) => b.views - a.views);
+  const ins = insightsFor(P);
   html += `<section class="dgrid">
-    <div class="card pad">${cardH('Needs attention', '')}
-      <div class="list">
-        ${notLogged.length ? `<div class="li"><span class="ok n">${I('today')}</span><div style="min-width:0"><b>Not logged today</b><div class="small muted">${notLogged.map(e => esc(e.name)).join(', ')}</div></div></div>` : `<div class="li"><span class="ok y">${I('check')}</span><b>Everyone who joined has logged today</b></div>`}
-        ${notJoined.length ? `<div class="li"><span class="ok n">${I('users')}</span><div style="min-width:0"><b>Not signed in yet</b><div class="small muted">${notJoined.map(e => esc(e.name)).join(', ')}. Send them the app link and the team code.</div></div></div>` : ''}
-        ${edits.slice(0, 6).map(x => { const n = x.days.length; const ds = x.days.sort().reverse(); return `<div class="li"><span class="ok n">${I('edit')}</span><div style="min-width:0;flex:1"><b>${esc(x.e.name)} ${x.fixed ? 'had' : 'edited'} ${n} past day${n===1?'':'s'}${x.fixed ? ' fixed' : ''}</b><div class="small muted">${esc(projectById(x.c.projectId)?.title || 'Project')} · ${esc(ds.slice(0,3).map(dayLabel).join(', '))}${n>3?` +${n-3} more`:''} · ${esc(ago(x.at))}</div></div><button class="btn sm" data-act="fix-entry" data-uid="${esc(x.c.ownerUid)}" data-id="${esc(x.c.id)}">Review</button></div>`; }).join('')}
-        ${!edits.length ? `<div class="li"><span class="ok y">${I('check')}</span><b>No past days edited this week</b></div>` : ''}
+    <div class="card pad">${cardH('Editor performance', esc(R.label), '<button class="link" data-view="leaderboard">Points board</button>')}
+      <div class="ptable ed" role="table"><div class="pt-row pt-head" role="row"><span>Editor</span><span class="r">Cuts</span><span class="r">Views gained</span><span class="r">Engagement</span><span>Best cut</span></div>
+      ${eds.map(o => { const er = o.totV ? o.totE / o.totV : 0; return `<div class="pt-row" role="row"><span class="pt-cut">${avatar(o.ed,'sm')}<b>${esc(o.ed.name)}</b></span><span class="r tnum">${o.cuts}</span><span class="r tnum"><b>${fmt(o.views)}</b></span><span class="r"><span class="er ${P.teamEr && er >= P.teamEr ? 'hi' : 'lo'}">${pctTxt(er)}</span></span><span class="small muted ellip">${o.best && o.best.gain.views > 0 ? esc(o.best.project?.title || '') : '—'}</span></div>`; }).join('')}
       </div></div>
-    <div class="card pad">${cardH('Biggest single-day gains', `${esc(monthLabel(ym))} · worth a quick check`)}
-      ${jumps.length ? `<div class="list">${jumps.map(x => { const e = editorById(x.editorId); const c = cutOf(x.editorId, x.cutId); return `<div class="li">${avatar(e,'sm')}<div style="min-width:0;flex:1"><b>${esc(e?.name)}</b><div class="small muted">${esc(projectById(x.projectId)?.title || 'Project')} · ${esc(dayLabel(x.date))}</div></div><b class="tnum" style="color:var(--good)">+${pts(x.pts)}</b>${c ? `<button class="btn sm" data-act="fix-entry" data-uid="${esc(uidOfEditor(x.editorId))}" data-id="${esc(c.id)}">Review</button>` : ''}</div>`; }).join('')}</div>` : '<p class="muted small" style="margin:0">No points logged this month yet.</p>'}
+    <div class="card pad">${cardH('What the numbers say', 'Worked out from the logged totals')}
+      ${ins.length ? `<ul class="insights">${ins.map(x => `<li>${x}</li>`).join('')}</ul>` : '<p class="muted small" style="margin:0">Insights appear once a few cuts have numbers.</p>'}
     </div>
   </section>`;
   return html;
 }
-
 
 /* ================= leaderboard ================= */
 function monthOptions(){
@@ -590,12 +717,12 @@ function lbList(list, rw){
   const meId = myEditor()?.id; const max = Math.max(1, ...list.map(r => r.total));
   return `<div class="card lb">${list.map(r => `<details class="${r.editor.id===meId?'me':''}"><summary>
       <span class="rank ${r.rank && r.rank<=3?'r'+r.rank:''}">${r.rank || '–'}</span>
-      <span class="who">${avatar(r.editor)}<span style="min-width:0"><b>${esc(r.editor.name)}${r.editor.id===meId?' · you':''}</b><span class="sub2">${tierChip(tierFor(r.total, rw.tiers), rw.tiers)}<span>${r.days}d logged</span></span></span></span>
+      <span class="who">${avatar(r.editor)}<span style="min-width:0"><b>${esc(r.editor.name)}${r.editor.id===meId?' · you':''}</b><span class="sub2">${tierChip(tierFor(r.total, rw.tiers), rw.tiers)}</span></span></span>
       <span class="barcol"><div class="bar"><i style="width:${(r.total/max*100).toFixed(1)}%"></i></div></span>
       <span class="tod ${r.today?'':'zero'}">${r.today ? '+'+pts(r.today)+' today' : 'no pts today'}</span>
       <span class="tot tnum">${pts(r.total)}</span>
       <span class="chev">${I('chev')}</span></summary>
-    <div class="bd"><div><span>Engagement</span><b>${pts(r.eng)}</b></div><div><span>Check-ins</span><b>${pts(r.checkin)}</b></div><div><span>Streaks</span><b>${pts(r.streak)}</b></div><div><span>Milestones</span><b>${pts(r.milestone)}</b></div><div><span>Head-to-head</span><b>${pts(r.h2h)}</b></div></div>
+    <div class="bd"><div><span>Engagement</span><b>${pts(r.eng)}</b></div><div><span>Milestones</span><b>${pts(r.milestone)}</b></div><div><span>Head-to-head</span><b>${pts(r.h2h)}</b></div></div>
   </details>`).join('')}</div>`;
 }
 
@@ -654,14 +781,16 @@ function viewProject(){
     canEditProject(p) ? `<button class="btn" data-act="edit-project" data-id="${esc(p.id)}">${I('edit')}Edit</button>` : '',
     canEditProject(p) ? `<button class="btn danger" data-act="delete-project" data-id="${esc(p.id)}">Delete</button>` : ''
   ].join('');
-  let html = `<div><button class="btn ghost sm" data-act="back">${I('back')}All projects</button></div>`;
+  let html = `<div><button class="btn ghost sm" data-act="back">${I('back')}${editorMode() && myEditor() ? 'My projects' : 'All projects'}</button></div>`;
   html += pageHead(esc(p.title), `${esc([p.client, p.platform].filter(Boolean).join(' · ') || 'No client set')} · added by ${esc(by || 'an editor')}${p.notes ? ' · '+esc(p.notes) : ''}`, acts);
   if (h.length) html += `<section class="card pad"><div class="sec-h" style="margin-bottom:14px"><h2>Head-to-head · ${esc(monthLabel(ym))}</h2><span class="small muted">Bonus paid when the month closes</span></div>
     <div class="podium">${[h[1], h[0], h[2]].map(x => x ? `<div class="pd p${Math.min(x.rank,3)}">${avatar(editorById(x.editorId),'lg')}<div><div class="nm">${esc(editorById(x.editorId)?.name)}</div><div class="pt tnum" style="font-size:17px">${pts(x.pts)} <small>pts · +${pts(x.bonus)}</small></div></div><div class="step" style="height:${[0,84,60,44][Math.min(x.rank,3)]}px;font-size:20px">${x.rank}</div></div>` : '<div></div>').join('')}</div></section>`;
   else if (cuts.length) html += `<div class="banner">${I('target')}<span>Head-to-head starts when a second editor adds a cut to this project.</span></div>`;
+  const myOwn = myEditor() && !adminView() ? cuts.filter(x => x.c.ownerUid === S.uid && x.c.status !== 'archived') : [];
+  if (myOwn.length){ const locked = isClosed(monthOf(today())); html += `<div class="sec-title"><h2>Your cut${myOwn.length === 1 ? '' : 's'}</h2><span class="small muted">Type the latest totals and save</span></div><div class="cuts">${myOwn.map(x => cutCard(x.c, today(), locked)).join('')}</div><div class="sec-title"><h2>Everyone on this project</h2></div>`; }
   if (!cuts.length) return html + `<div class="card empty"><div class="ico">${I('play')}</div><h3>No cuts yet</h3><p>${adminView() ? 'No editor has added a cut to this project yet.' : 'Be the first to add your version of this project.'}</p>${myEditor() && p.status !== 'closed' ? `<button class="btn primary" data-act="add-cut" data-project="${esc(p.id)}">${I('plus')}Add my cut</button>` : ''}</div>`;
   html += `<div class="card rows"><div class="row head"><span>Cut</span>${METRICS.map(m => `<span>${m.label}</span>`).join('')}<span>Month pts</span><span></span></div>
-    ${cuts.map(({c, ed, info}) => `<div class="row"><div class="first" style="display:flex;gap:10px;align-items:center;min-width:0">${avatar(ed,'sm')}<div style="min-width:0"><b>${esc(ed.name)}</b><div class="small muted">${c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">${esc(c.label || 'Video')}</a>` : esc(c.label || 'Cut')} · ${info?.lastDate ? 'logged '+esc(dayLabel(info.lastDate).toLowerCase()) : 'not logged'}</div></div></div>
+    ${cuts.map(({c, ed, info}) => `<div class="row"><div class="first" style="display:flex;gap:10px;align-items:center;min-width:0">${avatar(ed,'sm')}<div style="min-width:0"><b>${esc(ed.name)}</b><div class="small muted">${c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">${esc(c.label || 'Video')}</a>` : esc(c.label || 'Cut')} · ${info?.lastDate ? 'updated '+esc(dayLabel(info.lastDate).toLowerCase()) : 'no numbers yet'}</div></div></div>
       ${METRICS.map(m => `<div><span class="ml">${m.label}</span><span class="n tnum">${fmt(info?.hwm[m.key]||0)}</span></div>`).join('')}
       <div><span class="ml">Month pts</span><span class="n tnum" style="font-family:var(--font-display)">${pts(info?.monthPts?.[ym]||0)}</span></div>
       <div>${S.isAdmin ? `<button class="btn sm" data-act="fix-entry" data-uid="${esc(c.ownerUid)}" data-id="${esc(c.id)}">Fix</button>` : ''}</div></div>`).join('')}</div>
@@ -698,10 +827,10 @@ function viewMonth(){
     return `<div class="card tier" style="--tc:${tierVar(i)}"><div class="tn">${esc(t.name)}</div><div class="amt tnum">${money(t.amount)}</div><div class="need">${pts(t.min)}+ points</div>
       <div class="who">${inTier.length ? inTier.map(r => avatar(r.editor,'sm')).join('') : '<span class="small muted">Nobody yet</span>'}</div></div>`; }).join('')}</section>`;
   const top = rows[0] && rows[0].total > 0 ? rows[0] : null;
-  html += `<section class="card hero" style="grid-template-columns:auto 1fr auto">
+  html += `<section class="card hero eomhero" style="grid-template-columns:auto 1fr auto">
     ${top ? avatar(top.editor,'xl') : `<div class="empty" style="padding:0"><div class="ico">${I('trophy')}</div></div>`}
     <div><div class="k">Editor of the month${doc?.closed ? '' : ' · so far'}</div><div class="big" style="font-size:34px">${top ? esc(top.name) : 'Not decided'}</div><div class="muted small">${top ? `${pts(top.total)} points · ${money(rw.topAmount)} extra` : 'Waiting for the first points'}</div></div>
-    <div style="text-align:right"><div class="k">Total payout</div><div class="big tnum" style="font-size:30px">${money(payout)}</div><div class="muted small">${rows.filter(r => r.tierName).length} of ${rows.length} editors in a tier</div></div>
+    <div class="eom-pay" style="text-align:right"><div class="k">Total payout</div><div class="big tnum" style="font-size:30px">${money(payout)}</div><div class="muted small">${rows.filter(r => r.tierName).length} of ${rows.length} editors in a tier</div></div>
   </section>`;
   html += `<div class="card rows">${rows.map(r => `<div class="row rw">
     <span class="rank ${r.place && r.place<=3?'r'+r.place:''}">${r.place || '–'}</span>
@@ -719,7 +848,7 @@ function viewTeam(){
   const sorted = S.editors.slice().sort((a,b) => (a.active===false) - (b.active===false) || a.name.localeCompare(b.name));
   html += `<div class="card"><div class="roster head"><span>Editor</span><span class="hm">PIN</span><span class="hm">Cuts</span><span class="hm">Status</span><span class="hm" style="text-align:right">All-time pts</span><span></span></div>
   ${sorted.map(ed => { const uid = ed.id; const pinOk = !!S.pinSet[ed.id]; const cuts = (S.cutsByUid[uid]||[]).length; const all = S.calc.events.filter(e => e.editorId === ed.id).reduce((a,e)=>a+e.pts,0);
-    return `<div class="roster"><div style="display:flex;gap:10px;align-items:center">${avatar(ed,'sm')}<div><b>${esc(ed.name)}</b><div class="small muted mo">${pinOk ? 'PIN set' : 'Not signed in yet'}</div></div></div>
+    return `<div class="roster"><div style="display:flex;gap:10px;align-items:center">${avatar(ed,'sm')}<div><b>${esc(ed.name)}</b><div class="small muted mo">${pinOk ? 'PIN set' : 'Not joined yet'} · ${cuts} cut${cuts===1?'':'s'} · ${pts(all)} pts</div></div></div>
       <span class="hm">${pinOk ? '<span class="chip good">PIN set</span>' : '<span class="chip">Not signed in yet</span>'}</span><span class="hm tnum">${cuts}</span>
       <span class="hm">${ed.active===false?'<span class="chip">Inactive</span>':'<span class="chip good">Active</span>'}</span><span class="hm tnum" style="text-align:right;font-weight:800">${pts(all)}</span>
       <div class="acts"><button class="btn sm" data-act="rename-editor" data-id="${esc(ed.id)}">Rename</button>${pinOk?`<button class="btn sm" data-act="reset-pin" data-id="${esc(ed.id)}">Reset PIN</button>`:''}
@@ -735,24 +864,22 @@ function viewPoints(){
   const ex = { views:15000, likes:900, comments:60, shares:45, reposts:20 };
   const exEng = engagementPts(ex, s);
   const acts = S.isAdmin && !editorMode() ? `<button class="btn" data-act="edit-scoring">${I('settings')}Point values</button><button class="btn" data-act="edit-rewards">${I('gift')}Rewards</button>` : '';
-  return pageHead('How points work', 'Log your cuts\' totals every day. You earn points for each day\'s growth, plus bonuses for showing up, hitting milestones and beating other editors on the same project. Points reset each month.', acts) +
+  return pageHead('How points work', 'Update your cuts\' totals in Projects whenever the numbers change. You earn points on the growth since your last update, plus bonuses for view milestones and beating other editors on the same project. Points reset each month.', acts) +
   `<div class="rules">
     <div class="card"><h3><span class="ki">${I('bolt')}</span>Engagement</h3><p>Type the totals the platform shows. You earn points on the increase since your last entry.</p>
       <div class="wl">${METRICS.map(m => `<div><span style="display:flex;gap:8px;align-items:center">${I(m.key)}${m.label}</span><b>${unit(s[m.key])}</b></div>`).join('')}</div></div>
-    <div class="card"><h3><span class="ki">${I('flame')}</span>Show up daily</h3><p>Rewards the habit, even on slow days. Missed a day? Add it from History on the cut.</p>
-      <div class="wl"><div><span>Each day you log</span><b>+${pts(s.checkin)}</b></div><div><span>Every 7 days in a row</span><b>+${pts(s.streak7)}</b></div></div></div>
     <div class="card"><h3><span class="ki">${I('target')}</span>View milestones</h3><p>One-time bonus per cut, the day it crosses each mark.</p>
       <div class="wl">${MILESTONES.map(([k,,l]) => `<div><span>${l}</span><b>+${pts(s[k])}</b></div>`).join('')}</div></div>
     <div class="card"><h3><span class="ki">${I('trophy')}</span>Head-to-head</h3><p>Monthly, on each project with cuts from two or more editors, ranked by engagement points earned there.</p>
       <div class="wl"><div><span>1st on a project</span><b>+${pts(s.h2h1)}</b></div><div><span>2nd</span><b>+${pts(s.h2h2)}</b></div><div><span>3rd</span><b>+${pts(s.h2h3)}</b></div></div></div>
-    <div class="card"><h3><span class="ki">${I('star')}</span>Example day</h3><p>Your cut grew by ${fmt(ex.views)} views, ${ex.likes} likes, ${ex.comments} comments, ${ex.shares} shares and ${ex.reposts} reposts.</p>
+    <div class="card"><h3><span class="ki">${I('star')}</span>Example update</h3><p>Since your last update, your cut grew by ${fmt(ex.views)} views, ${ex.likes} likes, ${ex.comments} comments, ${ex.shares} shares and ${ex.reposts} reposts.</p>
       <div class="wl">${METRICS.map(m => `<div><span>${ex[m.key].toLocaleString('en-IN')} ${m.label.toLowerCase()} × ${s[m.key]}</span><b>${pts(ex[m.key]*s[m.key])}</b></div>`).join('')}
-        <div><span>Daily check-in</span><b>+${pts(s.checkin)}</b></div><div><span>Crossed 10K views</span><b>+${pts(s.m10k)}</b></div>
-        <div class="tot"><span>That day</span><b>${pts(exEng + s.checkin + s.m10k)} pts</b></div></div></div>
+        <div><span>Crossed 10K views</span><b>+${pts(s.m10k)}</b></div>
+        <div class="tot"><span>That update</span><b>${pts(exEng + s.m10k)} pts</b></div></div></div>
     <div class="card"><h3><span class="ki">${I('gift')}</span>Month-end rewards</h3><p>Your month total decides your tier. The top scorer also gets Editor of the month.</p>
       <div class="wl">${rw.tiers.map((t,i) => `<div><span>${tierChip(i, rw.tiers)} ${pts(t.min)}+ pts</span><b>${money(t.amount)}</b></div>`).join('')}<div><span>Editor of the month</span><b>${money(rw.topAmount)} extra</b></div></div></div>
     <div class="card" style="grid-column:1/-1"><h3><span class="ki">${I('lock')}</span>Fair play</h3>
-      <p>Enter the exact totals from the platform's insights. Only increases earn points, so repeats and dips never count twice. Log daily from My day. To correct an earlier day or add one you missed, open History on that cut; you can only change your own cuts, and only in months that aren't closed. The admin can see every entry and correct numbers that look wrong. When the month closes, results and rewards are locked.</p></div>
+      <p>Enter the exact totals from the platform's insights. Only increases earn points, so repeats and dips never count twice. Update totals from Projects whenever they change. To correct an earlier entry, open History on that cut; you can only change your own cuts, and only in months that aren't closed. The admin can see every entry and correct numbers that look wrong. When the month closes, results and rewards are locked.</p></div>
   </div>`;
 }
 
@@ -826,7 +953,7 @@ function cutDialog(cut, presetProject){
   }
   const pid = cut?.projectId || presetProject || '';
   openDialog({
-    title: cut ? 'Cut details' : 'Add a cut', sub: cut ? 'Change the link or name, or archive it when you stop tracking it.' : 'Add your posted version. You can type today\'s totals now or from your daily log.',
+    title: cut ? 'Cut details' : 'Add a cut', sub: cut ? 'Change the link or name, or archive it when you stop tracking it.' : 'Add your posted version. Type its current totals now, or later in Projects.',
     submitLabel: cut ? 'Save details' : 'Add cut',
     body: `<label class="field full" for="c-project">Project<select id="c-project" name="projectId" required ${cut?'disabled':''}><option value="">Choose project</option>${open.map(p=>`<option value="${esc(p.id)}" ${p.id===pid?'selected':''}>${esc(p.title)}</option>`).join('')}</select>
         ${cut ? '' : '<span class="hint">Not listed? <button type="button" class="link" data-new-project>Create a new project</button></span>'}</label>
@@ -834,8 +961,8 @@ function cutDialog(cut, presetProject){
       <label class="field" for="c-platform">Platform<select id="c-platform" name="platform">${PLATFORMS.map(x=>`<option ${(cut?.platform || projectById(pid)?.platform || 'Instagram')===x?'selected':''}>${x}</option>`).join('')}</select></label>
       <label class="field full" for="c-url">Video link<input type="url" id="c-url" name="url" maxlength="500" value="${esc(cut?.url)}" placeholder="https://www.instagram.com/reel/…"></label>
       <label class="field" for="c-date">Posted on<input type="date" id="c-date" name="postedAt" required value="${esc(cut?.postedAt || today())}" max="${today()}"></label>
-      ${!cut ? `<h4>Today's totals <span class="hint" style="text-transform:none;letter-spacing:0">optional</span></h4><div class="dmetrics">${METRICS.map(m=>`<label class="field" for="c-${m.key}">${m.label}<input type="number" id="c-${m.key}" name="m_${m.key}" min="0" step="1" inputmode="numeric" placeholder="0"></label>`).join('')}</div>` : ''}
-      ${cut ? `<label class="cbx full" for="c-archive"><input type="checkbox" id="c-archive" name="archived" ${cut.status==='archived'?'checked':''}> Archive this cut (hide it from my daily log)</label>` : ''}`,
+      ${!cut ? `<h4>Current totals <span class="hint" style="text-transform:none;letter-spacing:0">optional</span></h4><div class="dmetrics">${METRICS.map(m=>`<label class="field" for="c-${m.key}">${m.label}<input type="number" id="c-${m.key}" name="m_${m.key}" min="0" step="1" inputmode="numeric" placeholder="0"></label>`).join('')}</div>` : ''}
+      ${cut ? `<label class="cbx full" for="c-archive"><input type="checkbox" id="c-archive" name="archived" ${cut.status==='archived'?'checked':''}> Archive this cut (hide it from my projects)</label>` : ''}`,
     onSubmit: async fd => {
       const projectId = cut ? cut.projectId : clean(fd.get('projectId'));
       if (!projectById(projectId)) { formError('Choose a project.'); return false; }
@@ -854,7 +981,7 @@ function cutDialog(cut, presetProject){
       const daily = {};
       if (METRICS.some(m => clean(fd.get('m_'+m.key)) !== '')){ const r = readMetrics(fd, 'm_'); if (r.error){ formError(r.error); return false; } daily[today()] = { ...r.values, at:new Date().toISOString() }; }
       const t0 = daily[today()]; const ok = await save(() => api('POST', '/api/cuts', { ...data, projectId, ...(t0 ? { today:{ views:t0.views, likes:t0.likes, comments:t0.comments, shares:t0.shares, reposts:t0.reposts } } : {}) }));
-      if (ok){ toast(Object.keys(daily).length ? 'Cut added with today\'s numbers' : 'Cut added. Log its numbers below.', 'win'); S.view = 'log'; S.projectId = null; setHash(); render(); window.scrollTo({ top:0 }); }
+      if (ok){ toast(Object.keys(daily).length ? 'Cut added with its numbers' : 'Cut added. Type its totals below.', 'win'); S.view = 'projects'; S.projectId = null; setHash(); render(); window.scrollTo({ top:0 }); }
       return ok;
     }
   });
@@ -879,16 +1006,16 @@ function historyDialog(cutId){
   if (S.dirty.size){ toast('Save or clear the numbers you typed first.', 'error'); return; }
   const rows = cutDays(cut); const p = projectById(cut.projectId);
   openDialog({
-    title:'Entry history', sub:`${p?.title || 'Project'}${cut.label ? ' · '+cut.label : ''}. Edit or delete any day, or add a day you missed. Points recalculate as soon as you save.`,
-    submitLabel:'Add a missed day',
+    title:'Entry history', sub:`${p?.title || 'Project'}${cut.label ? ' · '+cut.label : ''}. Edit or delete any entry, or add one for an earlier date. Points recalculate as soon as you save.`,
+    submitLabel:'Add an earlier entry',
     body: rows.length ? `<div class="hist full">${rows.map(r => { const locked = isClosed(monthOf(r.date)); return `<div class="hrow">
         <div><b>${esc(dayLabel(r.date))}</b>${r.v.edited ? ' <span class="chip">edited</span>' : ''}${r.v.fixedBy ? ' <span class="chip acc">fixed by admin</span>' : ''}
           <div class="hm2 tnum">${METRICS.map(m => `${fmt(r.v[m.key])} ${m.label.toLowerCase()}`).join(' · ')}</div></div>
         <div class="hp ${r.pts ? '' : 'zero'}">+${pts(r.pts)} pts</div>
         <div class="acts">${locked ? `<span class="chip">${I('lock')}Month closed</span>` : `<button type="button" class="btn sm" data-hedit="${r.date}" data-cut="${esc(cutId)}">${I('edit')}Edit</button><button type="button" class="btn sm danger" data-hdel="${r.date}" data-cut="${esc(cutId)}">Delete</button>`}</div>
       </div>`; }).join('')}</div>
-      <p class="full small muted" style="margin:0">Points shown are engagement and milestone points for each day. Daily check-in and streak bonuses are added on top.</p>`
-      : `<p class="full muted" style="margin:0">No entries yet. Log today's numbers from My day, or add a missed day.</p>`,
+      <p class="full small muted" style="margin:0">Points shown are engagement and milestone points earned by each entry.</p>`
+      : `<p class="full muted" style="margin:0">No entries yet. Update this cut's totals from Projects.</p>`,
     onSubmit: async () => { setTimeout(() => entryDialog(cutId, null), 0); return true; }
   });
   const c = form.querySelector('[data-close]'); if (c) c.textContent = 'Close';
@@ -900,7 +1027,7 @@ function entryDialog(cutId, date){
   const prevDate = d => Object.keys(cut.daily||{}).filter(x => x < d).sort().pop();
   const ref0 = date ? cut.daily?.[prevDate(date)] : cut.daily?.[Object.keys(cut.daily||{}).sort().pop()];
   openDialog({
-    title: date ? `Edit ${dayLabel(date).toLowerCase() === 'today' || dayLabel(date).toLowerCase() === 'yesterday' ? dayLabel(date).toLowerCase() + '’s' : dayLabel(date)} numbers` : 'Add a missed day',
+    title: date ? `Edit ${dayLabel(date).toLowerCase() === 'today' || dayLabel(date).toLowerCase() === 'yesterday' ? dayLabel(date).toLowerCase() + '’s' : dayLabel(date)} numbers` : 'Add an earlier entry',
     sub: 'Type the totals the platform showed on that day, not the change since the day before.',
     submitLabel: 'Save entry',
     body: `${date ? `<input type="hidden" name="date" value="${date}">` : `<label class="field full" for="h-date">Day<input type="date" id="h-date" name="date" required ${minDate?`min="${minDate}"`:''} max="${today()}" value="${(() => { let d = today(); for (let i = 0; i < 60; i++){ if (!cut.daily?.[d] && (!minDate || d >= minDate) && !isClosed(monthOf(d))) return d; d = addDays(d, -1); } return today(); })()}"></label>`}
@@ -988,12 +1115,11 @@ function scoringDialog(){
   openDialog({
     title:'Point values', sub:'Scores recalculate for every open month. Closed months keep their locked results.', submitLabel:'Save point values',
     body: `<h4>Per unit of growth</h4>${f('views','Per view','0.001','0.01 = 1 per 100')}${f('likes','Per like','0.01','0.2 = 2 per 10')}${f('comments','Per comment','0.1')}${f('shares','Per share','0.1')}${f('reposts','Per repost','0.1')}
-      <h4>Show up</h4>${f('checkin','Each day logged','1')}${f('streak7','Every 7-day streak','1')}
       <h4>View milestones (per cut)</h4>${MILESTONES.map(([k,,l]) => f(k, l, '1')).join('')}
       <h4>Monthly head-to-head</h4>${f('h2h1','1st on a project','1')}${f('h2h2','2nd','1')}${f('h2h3','3rd','1')}`,
     onSubmit: async fd => {
       const next = {};
-      for (const k of Object.keys(DEFAULT_SCORING)){ const n = Number(fd.get(k)); if (!Number.isFinite(n) || n < 0 || n > 100000) { formError('Every value must be between 0 and 100,000.'); return false; } next[k] = n; }
+      for (const k of Object.keys(DEFAULT_SCORING)){ if (k === 'checkin' || k === 'streak7'){ next[k] = 0; continue; } const n = Number(fd.get(k)); if (!Number.isFinite(n) || n < 0 || n > 100000) { formError('Every value must be between 0 and 100,000.'); return false; } next[k] = n; }
       if (next.h2h1 < next.h2h2 || next.h2h2 < next.h2h3) { formError('1st must be worth at least 2nd, and 2nd at least 3rd.'); return false; }
       const ok = await save(() => api('PUT', '/api/settings/scoring', next)); if (ok) toast('Point values saved', 'win'); return ok;
     }
@@ -1045,7 +1171,7 @@ async function saveCut(card, quiet){
   const clearDirty = () => card.querySelectorAll('input[data-metric]').forEach(i => S.dirty.delete(i.id));
   const prev = cut.daily?.[date];
   if (prev && METRICS.every(m => int(prev[m.key]) === vals[m.key])) { clearDirty(); updateSaveBar(); return null; }
-  const calc = S.calc; const wasLogged = calc.logged.get(myEditor()?.id)?.has(date);
+  const calc = S.calc;
   const hb = hwmBefore(cut, date); const prevGain = prev ? engagementPts(Object.fromEntries(METRICS.map(m => [m.key, Math.max(0, int(prev[m.key]) - hb[m.key])])), calc.s) : 0;
   const ok = await save(() => api('PUT', `/api/cuts/${id}/days/${date}`, vals), quiet);
   if (ok){
@@ -1053,8 +1179,8 @@ async function saveCut(card, quiet){
     if (!quiet){
       const g = Object.fromEntries(METRICS.map(m => [m.key, Math.max(0, vals[m.key] - hb[m.key])]));
       const ms = MILESTONES.reduce((acc, [k, thr]) => acc + (hb.views < thr && vals.views >= thr && !(prev && int(prev.views) >= thr) ? calc.s[k] : 0), 0);
-      const delta = engagementPts(g, calc.s) - prevGain + ms + (wasLogged ? 0 : calc.s.checkin);
-      toast(delta > 0 ? `Saved · +${pts(delta)} pts${ms ? ' incl. milestone' : ''}${wasLogged ? '' : (ms ? ' & check-in' : ' incl. check-in')}` : 'Saved', 'win');
+      const delta = engagementPts(g, calc.s) - prevGain + ms;
+      toast(delta > 0 ? `Saved · +${pts(delta)} pts${ms ? ' incl. milestone' : ''}` : 'Saved', 'win');
     }
   }
   return ok;
@@ -1072,13 +1198,14 @@ $('#saveAllBtn').addEventListener('click', e => saveAll(e.currentTarget));
 
 function setHash(){ try { if (location.hash !== '#'+S.view) history.replaceState(null, '', '#'+S.view); } catch {} }
 function go(view){
-  if (S.dirty.size && S.view === 'log' && view !== 'log'){ toast('Save or clear your numbers first.', 'error'); return; }
+  if (view === 'log') view = 'projects';
+  if (S.dirty.size && S.view === 'projects' && view !== 'projects'){ toast('Save or clear your numbers first.', 'error'); return; }
   S.view = view; S.projectId = null; setHash(); render(); window.scrollTo({ top:0 });
 }
-function readHash(){ const h = (location.hash||'').slice(1); if (VIEWS.includes(h)) S.view = h; }
+function readHash(){ const h = (location.hash||'').slice(1); if (!VIEWS.includes(h)) return; const v = h === 'log' ? 'projects' : h; if (v !== S.view || h === 'log') S.projectId = null; S.view = v; if (h === 'log') setHash(); }
 document.addEventListener('click', e => {
   const md = e.target.closest('[data-mode]');
-  if (md && !md.closest('dialog')){ if (S.dirty.size && S.view === 'log'){ toast('Save or clear your numbers first.', 'error'); return; } S.mode = md.dataset.mode; S.view = 'home'; S.projectId = null; setHash(); render(); window.scrollTo({ top:0 }); return; }
+  if (md && !md.closest('dialog')){ if (S.dirty.size && S.view === 'projects'){ toast('Save or clear your numbers first.', 'error'); return; } S.mode = md.dataset.mode; S.view = 'home'; S.projectId = null; setHash(); render(); window.scrollTo({ top:0 }); return; }
   const v = e.target.closest('[data-view]'); if (v && !v.closest('dialog')) go(v.dataset.view); });
 window.addEventListener('hashchange', () => { readHash(); render(); });
 
@@ -1092,6 +1219,9 @@ $('#main').addEventListener('change', e => { const f = e.target.dataset.filter; 
 $('#main').addEventListener('click', async e => {
   const t = e.target;
   const sb = t.closest('[data-sort]'); if (sb){ S.sort = sb.dataset.sort; render(); return; }
+  const pr = t.closest('[data-perfrange]'); if (pr){ S.perfRange = pr.dataset.perfrange; render(); return; }
+  const ps = t.closest('[data-perfsort]'); if (ps){ S.perfSort = ps.dataset.perfsort; render(); return; }
+  const gp = t.closest('[data-goto-project]'); if (gp){ go('projects'); S.projectId = gp.dataset.gotoProject; render(); return; }
   const ld = t.closest('[data-logdate]'); if (ld){ if (S.dirty.size){ toast('Save or clear your numbers before switching day.', 'error'); return; } S.logDate = ld.dataset.logdate; render(); return; }
   const op = t.closest('[data-open-project]'); if (op){ S.projectId = op.dataset.openProject; render(); window.scrollTo({ top:0 }); return; }
   const b = t.closest('[data-act]'); if (!b) return;
@@ -1162,7 +1292,7 @@ $('#main').addEventListener('click', async e => {
         csv = [['Month','Rank','Editor','Points','Tier','Tier reward','Editor of month','Total reward'], ...rows.map(r => [ym, r.place ?? '', r.name, r.total, r.tierName, r.tierAmt, r.topAmt, r.reward])];
       } else {
         const st = monthStandings(ym, S.calc);
-        csv = [['Month','Rank','Editor','Total','Today','Engagement','Check-ins','Streaks','Milestones','Head-to-head','Days logged'], ...st.list.map(r => [ym, r.rank ?? '', r.editor.name, Math.round(r.total*10)/10, Math.round(r.today*10)/10, Math.round(r.eng*10)/10, r.checkin, r.streak, r.milestone, r.h2h, r.days])];
+        csv = [['Month','Rank','Editor','Total','Today','Engagement','Milestones','Head-to-head'], ...st.list.map(r => [ym, r.rank ?? '', r.editor.name, Math.round(r.total*10)/10, Math.round(r.today*10)/10, Math.round(r.eng*10)/10, r.milestone, r.h2h])];
       }
       try { await navigator.clipboard.writeText(csv.map(r => r.map(q).join(',')).join('\n')); toast('Copied. Paste it into a sheet.', 'win'); } catch { toast('Copying was blocked by the browser.', 'error'); }
       break;
